@@ -1,0 +1,32 @@
+# Build output
+agentspack
+dist/
+
+# Embedded content (generated from system/ by build.sh)
+internal/content/system/
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test output
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Debug
+__debug_bin*
+*.prof
