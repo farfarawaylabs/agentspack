@@ -83,7 +83,11 @@
 ```
 ````
 
-## 04. Code Review
+## 04. Implementation
+
+When implementing the plan, try to use subagents as much as possible and run them in parallal (based on the TODOs specification of which tasks can be implemented in parallal.)
+
+## 05. Code Review
 
 Before finishing the work, conduct a comprehensive code review on all your changes. This is a critical quality gate that ensures code excellence.
 
