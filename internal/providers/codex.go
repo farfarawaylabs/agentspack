@@ -230,6 +230,12 @@ func (p *CodexProvider) generateAgentSkills(fs content.FileSystem, skillsDir str
 		return err
 	}
 
+	// Also check subdirectories (e.g., system/agents/backend/*.md)
+	subFiles, err := fs.Glob("system/agents/**/*.md")
+	if err == nil {
+		files = append(files, subFiles...)
+	}
+
 	for _, file := range files {
 		if err := p.createAgentSkill(fs, file, skillsDir); err != nil {
 			return err

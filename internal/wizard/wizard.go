@@ -3,7 +3,9 @@ package wizard
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 )
@@ -16,13 +18,26 @@ const (
 	ClaudeCodeModeSkills ClaudeCodeMode = "skills"
 )
 
+// SyncMode represents how changes should be applied to target repos
+type SyncMode string
+
+const (
+	SyncModePR    SyncMode = "pr"
+	SyncModeMerge SyncMode = "merge"
+)
+
 // Config holds the user's selections from the wizard
 type Config struct {
-	Providers       []string
-	TechStacks      []string
-	GenerateBase    bool           // Whether to generate the base file (CLAUDE.md, AGENTS.md, etc.)
-	OutputDir       string
-	ClaudeCodeMode  ClaudeCodeMode // Only used when claude-code is selected
+	Providers      []string
+	TechStacks     []string
+	GenerateBase   bool           // Whether to generate the base file (CLAUDE.md, AGENTS.md, etc.)
+	OutputDir      string
+	ClaudeCodeMode ClaudeCodeMode // Only used when claude-code is selected
+
+	// GitHub sync options
+	SyncToGitHub bool     // Whether to sync generated files to GitHub repos
+	SyncMode     SyncMode // "pr" or "merge"
+	TargetBranch string   // Branch to create PR against or merge into (default: "main")
 }
 
 // Available options
@@ -43,7 +58,14 @@ var (
 		huh.NewOption("Skills (loaded on-demand by Claude)", string(ClaudeCodeModeSkills)),
 	}
 
-	DefaultOutputDir = "./dist/agentspack"
+	SyncModeOptions = []huh.Option[string]{
+		huh.NewOption("Create Pull Request (for review)", string(SyncModePR)),
+		huh.NewOption("Merge directly to branch", string(SyncModeMerge)),
+	}
+
+	DefaultOutputDir   = "./dist/agentspack"
+	DefaultTargetBranch = "main"
+	SyncReposFile      = "sync_repos.md"
 )
 
 // Run executes the interactive wizard and returns the user's configuration
@@ -138,10 +160,77 @@ func Run() (*Config, error) {
 		return nil, fmt.Errorf("wizard error: %w", err)
 	}
 
-	// Clean up the output path
-	config.OutputDir = filepath.Clean(config.OutputDir)
+	// Expand and clean the output path
+	config.OutputDir = expandPath(config.OutputDir)
+
+	// Step 4: GitHub sync options (only if sync_repos.md exists)
+	if syncReposFileExists() {
+		syncForm := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Sync generated files to GitHub repositories?").
+					Description("Repositories listed in " + SyncReposFile).
+					Value(&config.SyncToGitHub),
+			),
+		)
+
+		err = syncForm.Run()
+		if err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+
+		// If user wants to sync, ask for mode and branch
+		if config.SyncToGitHub {
+			var syncModeStr string = string(SyncModePR) // default to PR
+			config.TargetBranch = DefaultTargetBranch
+
+			syncOptionsForm := huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("How should changes be applied?").
+						Options(SyncModeOptions...).
+						Value(&syncModeStr),
+				),
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Target branch for PR/merge").
+						Value(&config.TargetBranch).
+						Placeholder(DefaultTargetBranch),
+				),
+			)
+
+			err = syncOptionsForm.Run()
+			if err != nil {
+				return nil, fmt.Errorf("wizard error: %w", err)
+			}
+
+			config.SyncMode = SyncMode(syncModeStr)
+		}
+	}
 
 	return config, nil
+}
+
+// expandPath expands ~ to home directory and handles absolute paths
+func expandPath(path string) string {
+	// First clean the path
+	path = filepath.Clean(path)
+
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~") {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			if path == "~" {
+				path = homeDir
+			} else if strings.HasPrefix(path, "~/") {
+				path = filepath.Join(homeDir, path[2:])
+			}
+		}
+	}
+
+	// If path is already absolute (starts with /), use it as-is
+	// Otherwise, it's relative and will be resolved relative to cwd by the caller
+	return path
 }
 
 // containsProvider checks if a provider is in the selected list
@@ -152,6 +241,12 @@ func containsProvider(providers []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// syncReposFileExists checks if sync_repos.md exists in the current directory
+func syncReposFileExists() bool {
+	info, err := os.Stat(SyncReposFile)
+	return err == nil && !info.IsDir()
 }
 
 // PrintSummary displays the user's selections
@@ -165,6 +260,13 @@ func PrintSummary(config *Config) {
 	fmt.Printf("Output:      %s\n", config.OutputDir)
 	if containsProvider(config.Providers, "claude-code") {
 		fmt.Printf("Claude Code: %s mode\n", config.ClaudeCodeMode)
+	}
+	if config.SyncToGitHub {
+		syncModeDesc := "PR"
+		if config.SyncMode == SyncModeMerge {
+			syncModeDesc = "merge"
+		}
+		fmt.Printf("GitHub Sync: Yes (%s to %s)\n", syncModeDesc, config.TargetBranch)
 	}
 	fmt.Println()
 }

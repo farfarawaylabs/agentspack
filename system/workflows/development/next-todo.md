@@ -14,8 +14,9 @@
 ## 03. Planning gate (before coding):
 
 1.  Check the ./agents/plans folder and see if a plan already exists for the task.
-2.  If a plan does not exist, create it first. Name the file using the Task ID so it’s easy to find and connect to the todo task (e.g., ./agents/plans/T-001.md). The plan should be a detailed description of what the agent is about to do and how it plans to implement the task. After writing the plan, stop and allow the user to review it before proceeding.
+2.  If a plan does not exist, create it first and save it to this folder. Name the file using the Task ID so it’s easy to find and connect to the todo task (e.g., ./agents/plans/T-001.md). The plan should be a detailed description of what the agent is about to do and how it plans to implement the task. After writing the plan, stop and allow the user to review it before proceeding.
 3.  If a plan already exists, read it carefully and only then move to the implementation phase.
+4.  After writing the plan, make sure to read it carfully, review it and see if something was missed.
 
 - Plan template (use for each sub-task as needed):
 
@@ -171,7 +172,8 @@ Only proceed to commit and finish the work after completing this review process 
 
 1. Commit all the changes to the branch.
 2. Update the .agents/todos.md
-3. Add a documents to the .agents/docs detailing your work, how to use it and how to test it.
-4. Ask the user to review all changes and if he wants to merge the branch to main.
+3. Add a documents to the .agents/docs detailing your work, how to use it and how to test it. Make sure we don't just detail how to run unit tests, but also how to run full integration tests of the system (if possible at this phase).
+4. If you are developing a backend API, create (check if one exists and update it) a Postman collection with all of the developed ednpoints of the system, including tests ones.
+5. Ask the user to review all changes and if he wants to merge the branch to main.
 
 Addiotnal instructions: #$ARGUMENTS

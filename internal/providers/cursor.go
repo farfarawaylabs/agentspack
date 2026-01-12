@@ -291,6 +291,12 @@ func (p *CursorProvider) generateAgentRules(fs content.FileSystem, cursorDir str
 		return err
 	}
 
+	// Also check subdirectories (e.g., system/agents/backend/*.md)
+	subFiles, err := fs.Glob("system/agents/**/*.md")
+	if err == nil {
+		files = append(files, subFiles...)
+	}
+
 	for _, file := range files {
 		if err := p.createAgentRule(fs, file, cursorDir); err != nil {
 			return err

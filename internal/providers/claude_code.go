@@ -350,6 +350,12 @@ func (p *ClaudeCodeProvider) generateSubAgents(fs content.FileSystem, agentsDir 
 		return err
 	}
 
+	// Also check subdirectories (e.g., system/agents/backend/*.md)
+	subFiles, err := fs.Glob("system/agents/**/*.md")
+	if err == nil {
+		files = append(files, subFiles...)
+	}
+
 	for _, file := range files {
 		if err := p.createSubAgent(fs, file, agentsDir); err != nil {
 			return err

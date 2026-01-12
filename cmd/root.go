@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentspack/agentspack/internal/generator"
 	_ "github.com/agentspack/agentspack/internal/providers" // Register providers
+	"github.com/agentspack/agentspack/internal/syncer"
 	"github.com/agentspack/agentspack/internal/wizard"
 	"github.com/spf13/cobra"
 )
@@ -81,5 +82,14 @@ func runWizard() {
 	if err := gen.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Run the syncer if GitHub sync was requested
+	if config.SyncToGitHub {
+		sync := syncer.New(config, config.OutputDir)
+		if err := sync.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Sync error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }

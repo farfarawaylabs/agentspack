@@ -7,6 +7,7 @@ A command-line tool that generates **provider-specific AI agent context files** 
 Different AI coding assistants expect different "context" formats and folder structures. Teams waste time manually copying, reshaping, and maintaining multiple variants of the same guidance for each tool they use.
 
 **agentspack** solves this by:
+
 - Providing a curated library of best-practice templates
 - Generating provider-specific output with one command
 - Supporting multiple tech stacks in a single run
@@ -43,21 +44,28 @@ agentspack
 The wizard will guide you through:
 
 1. **Select providers** — Choose which AI coding tools you want to generate files for:
+
    - Cursor
    - Claude Code
    - Codex
 
 2. **Claude Code mode** (if selected) — Choose how tech stack rules should be generated:
+
    - **Rules** — Always loaded, path-scoped rule files
    - **Skills** — Loaded on-demand when relevant
 
 3. **Select tech stacks** — Choose which technology templates to include:
+
    - Backend
    - React
 
 4. **Base file** — Optionally generate a base instructions file (`CLAUDE.md`, `AGENTS.md`, etc.)
 
 5. **Output directory** — Specify where to write the generated files (default: `./dist/agentspack`)
+
+6. **GitHub sync** (if `sync_repos.md` exists) — Optionally sync generated files to multiple GitHub repositories:
+   - Create Pull Requests for review, or
+   - Merge directly to a target branch
 
 ### Example Session
 
@@ -79,6 +87,13 @@ Welcome to agentspack!
 
 ? Output directory ./dist/agentspack
 
+? Sync generated files to GitHub repositories? Yes
+
+? How should changes be applied?
+  > Create Pull Request (for review)
+
+? Target branch for PR/merge main
+
 === Configuration Summary ===
 
 Providers:   cursor, claude-code
@@ -86,6 +101,7 @@ Tech Stacks: backend, react
 Base file:   yes
 Output:      ./dist/agentspack
 Claude Code: rules mode
+GitHub Sync: Yes (PR to main)
 
 Using embedded templates
 Generating files to: /path/to/your/project/dist/agentspack
@@ -94,6 +110,13 @@ Generating for cursor...
 Generating for claude-code...
 
 Generation complete!
+
+Syncing to 2 GitHub repositories...
+
+  → myorg/frontend-app ... PR created: https://github.com/myorg/frontend-app/pull/42
+  → myorg/backend-api ... PR created: https://github.com/myorg/backend-api/pull/17
+
+Sync complete! 2 PRs created.
 ```
 
 ## Project Structure
@@ -109,6 +132,9 @@ agents/
 │   │   │   ├── cursor.go    # Cursor output format
 │   │   │   ├── claude_code.go # Claude Code output format
 │   │   │   └── codex.go     # Codex output format
+│   │   ├── syncer/          # GitHub sync functionality
+│   │   │   ├── syncer.go    # Sync orchestration
+│   │   │   └── github.go    # GitHub CLI wrapper
 │   │   ├── templates/       # Template processing
 │   │   └── wizard/          # Interactive prompt logic
 │   ├── system/              # Source markdown templates
@@ -129,22 +155,29 @@ agents/
 ## Template Categories
 
 ### Base Templates
+
 Provider-specific base configuration files that set up the foundation for AI assistant interaction.
 
 ### Rules
+
 Organized by domain:
+
 - **Global** — Coding styles, error handling, input validation
 - **Backend** — API development, database queries, data modeling
 - **Frontend** — React components, responsive design
 
 ### Agents
+
 Specialized AI agent prompts:
+
 - UI Designer
 - UX Researcher
 - Visual Storyteller
 
 ### Workflows
+
 Step-by-step process templates:
+
 - **Planning** — PRD creation, market research, development phases, UX research, UI design, todo generation
 
 ## Building from Source
@@ -185,11 +218,11 @@ Each provider folder contains the generated context files in the format expected
 
 ## Supported Providers
 
-| Provider | Status | Output Format |
-|----------|--------|---------------|
-| Cursor | Implemented | `.cursorrules` and rules directory |
-| Claude Code | Implemented | `CLAUDE.md` and rules/skills |
-| Codex | Implemented | `AGENTS.md` and guidance files |
+| Provider    | Status      | Output Format                      |
+| ----------- | ----------- | ---------------------------------- |
+| Cursor      | Implemented | `.cursorrules` and rules directory |
+| Claude Code | Implemented | `CLAUDE.md` and rules/skills       |
+| Codex       | Implemented | `AGENTS.md` and guidance files     |
 
 ## Development
 
@@ -204,6 +237,74 @@ Each provider folder contains the generated context files in the format expected
 1. Add markdown files to the appropriate folder under `system/`
 2. Run `./build.sh` to embed the new templates
 3. Update provider adapters if needed to include the new content
+
+## GitHub Sync Feature
+
+agentspack can automatically distribute generated files to multiple GitHub repositories. This is useful for teams that maintain AI agent configurations across several codebases.
+
+### Prerequisites
+
+1. Install the [GitHub CLI](https://cli.github.com/) (`gh`)
+2. Authenticate with GitHub:
+   ```bash
+   gh auth login
+   ```
+
+### Setup
+
+Create a `sync_repos.md` file in the directory where you run agentspack:
+
+```markdown
+# Repositories to sync agentspack files to
+
+# One repo per line in owner/repo format
+
+myorg/frontend-app
+myorg/backend-api
+myorg/shared-lib
+
+# Lines starting with # are comments
+
+# Empty lines are ignored
+```
+
+### Usage
+
+When `sync_repos.md` exists, the wizard will automatically ask additional questions after the standard generation options:
+
+1. **Sync to GitHub?** — Whether to sync the generated files to the listed repositories
+2. **PR or merge?** — Choose how changes are applied:
+   - **Create Pull Request** — Creates a PR for review (recommended for teams)
+   - **Merge directly** — Pushes changes directly to the target branch
+3. **Target branch** — Which branch to create PRs against or merge into (default: `main`)
+
+### Example Sync Output
+
+```
+Syncing to 3 GitHub repositories...
+
+  → myorg/frontend-app ... PR created: https://github.com/myorg/frontend-app/pull/42
+  → myorg/backend-api ... PR created: https://github.com/myorg/backend-api/pull/17
+  → myorg/shared-lib ... skipped (no changes)
+
+Sync complete! 2 PRs created, 1 skipped.
+```
+
+### How It Works
+
+For each repository in `sync_repos.md`:
+
+1. Clones the repo (shallow clone for speed)
+2. Creates a new branch: `agentspack/update-YYYYMMDD-HHMMSS`
+3. Copies all generated files to the repository root
+4. Commits changes (if any)
+5. Creates a PR or merges directly, based on your selection
+
+### Special Cases
+
+- **Empty repositories** — If a repo has no commits yet, agentspack will initialize it by pushing directly to the target branch (PRs require an existing base branch to compare against)
+- **No changes detected** — If the generated files are identical to what's already in the repo, it will be skipped
+- **Failed repos** — If a repo fails to sync, agentspack continues with the remaining repos and reports failures at the end
 
 ## Future Plans
 
