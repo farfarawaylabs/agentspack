@@ -51,9 +51,15 @@ var techStackConfigs = map[string]TechStackConfig{
 
 func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, outputDir string) error {
 	// Create the output directory structure directly in the user's chosen directory
-	cursorDir := filepath.Join(outputDir, ".cursor", "rules")
-	if err := os.MkdirAll(cursorDir, 0755); err != nil {
+	rulesDir := filepath.Join(outputDir, ".cursor", "rules")
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create cursor rules directory: %w", err)
+	}
+
+	// Create commands directory for workflows
+	commandsDir := filepath.Join(outputDir, ".cursor", "commands")
+	if err := os.MkdirAll(commandsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cursor commands directory: %w", err)
 	}
 
 	// 0. Generate AGENTS.md base file if requested
@@ -64,7 +70,7 @@ func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, 
 	}
 
 	// 1. Generate global rules (concatenated)
-	if err := p.generateGlobalRules(fs, cursorDir); err != nil {
+	if err := p.generateGlobalRules(fs, rulesDir); err != nil {
 		return fmt.Errorf("failed to generate global rules: %w", err)
 	}
 
@@ -75,19 +81,19 @@ func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, 
 			fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
 			continue
 		}
-		if err := p.generateStackRules(fs, cursorDir, stack, stackConfig); err != nil {
+		if err := p.generateStackRules(fs, rulesDir, stack, stackConfig); err != nil {
 			return fmt.Errorf("failed to generate %s rules: %w", stack, err)
 		}
 	}
 
 	// 3. Generate agent rules
-	if err := p.generateAgentRules(fs, cursorDir); err != nil {
+	if err := p.generateAgentRules(fs, rulesDir); err != nil {
 		return fmt.Errorf("failed to generate agent rules: %w", err)
 	}
 
-	// 4. Generate workflow rules
-	if err := p.generateWorkflowRules(fs, cursorDir); err != nil {
-		return fmt.Errorf("failed to generate workflow rules: %w", err)
+	// 4. Generate workflow commands (Cursor supports /commands like Claude Code)
+	if err := p.generateWorkflowCommands(fs, commandsDir); err != nil {
+		return fmt.Errorf("failed to generate workflow commands: %w", err)
 	}
 
 	return nil
@@ -441,8 +447,9 @@ func escapeYAMLString(s string) string {
 	return s
 }
 
-// generateWorkflowRules creates rules for workflow steps and orchestrators
-func (p *CursorProvider) generateWorkflowRules(fs content.FileSystem, cursorDir string) error {
+// generateWorkflowCommands creates commands for workflow steps and orchestrators
+// Cursor supports /commands similar to Claude Code, so workflows map naturally to commands
+func (p *CursorProvider) generateWorkflowCommands(fs content.FileSystem, commandsDir string) error {
 	// Check if workflows directory exists
 	if _, err := fs.Stat("system/workflows"); err != nil {
 		// No workflows directory, skip silently
@@ -462,8 +469,8 @@ func (p *CursorProvider) generateWorkflowRules(fs content.FileSystem, cursorDir 
 
 		workflowName := entry.Name()
 
-		// Generate rules for this workflow
-		if err := p.generateSingleWorkflow(fs, cursorDir, workflowName); err != nil {
+		// Generate commands for this workflow
+		if err := p.generateSingleWorkflowCommands(fs, commandsDir, workflowName); err != nil {
 			return fmt.Errorf("failed to generate workflow '%s': %w", workflowName, err)
 		}
 	}
@@ -471,8 +478,8 @@ func (p *CursorProvider) generateWorkflowRules(fs content.FileSystem, cursorDir 
 	return nil
 }
 
-// generateSingleWorkflow creates step rules and an orchestrator for one workflow
-func (p *CursorProvider) generateSingleWorkflow(fs content.FileSystem, cursorDir, workflowName string) error {
+// generateSingleWorkflowCommands creates step commands and an orchestrator for one workflow
+func (p *CursorProvider) generateSingleWorkflowCommands(fs content.FileSystem, commandsDir, workflowName string) error {
 	// Find all markdown files in the workflow directory
 	pattern := fmt.Sprintf("system/workflows/%s/*.md", workflowName)
 	files, err := fs.Glob(pattern)
@@ -507,8 +514,8 @@ func (p *CursorProvider) generateSingleWorkflow(fs content.FileSystem, cursorDir
 		// Normalize step name
 		stepName = strings.ReplaceAll(stepName, "_", "-")
 
-		// Generate the rule name for this step
-		ruleName := fmt.Sprintf("workflow-%s-%02d-%s", workflowName, order, stepName)
+		// Generate the command name for this step
+		commandName := fmt.Sprintf("%s-%02d-%s", workflowName, order, stepName)
 
 		// Read file to extract description
 		fileContent, err := fs.ReadFile(file)
@@ -521,12 +528,12 @@ func (p *CursorProvider) generateSingleWorkflow(fs content.FileSystem, cursorDir
 		steps = append(steps, templates.WorkflowStep{
 			Order:       order,
 			Name:        templates.NormalizeWorkflowName(stepName),
-			RuleName:    ruleName,
+			RuleName:    commandName, // Reusing RuleName field for command name
 			Description: description,
 		})
 
-		// Create the step rule
-		if err := p.createWorkflowStepRule(fs, file, cursorDir, ruleName, workflowName); err != nil {
+		// Create the step command
+		if err := p.createWorkflowStepCommand(fs, file, commandsDir, commandName); err != nil {
 			return err
 		}
 	}
@@ -536,38 +543,21 @@ func (p *CursorProvider) generateSingleWorkflow(fs content.FileSystem, cursorDir
 		return steps[i].Order < steps[j].Order
 	})
 
-	// Create the workflow orchestrator
-	return p.createWorkflowOrchestrator(cursorDir, workflowName, steps)
+	// Create the workflow orchestrator command
+	return p.createWorkflowOrchestratorCommand(commandsDir, workflowName, steps)
 }
 
-// createWorkflowStepRule creates a Cursor rule for a single workflow step
-func (p *CursorProvider) createWorkflowStepRule(fs content.FileSystem, sourcePath, cursorDir, ruleName, workflowName string) error {
+// createWorkflowStepCommand creates a Cursor command for a single workflow step
+// Commands are simple markdown files without YAML frontmatter
+func (p *CursorProvider) createWorkflowStepCommand(fs content.FileSystem, sourcePath, commandsDir, commandName string) error {
 	fileContent, err := fs.ReadFile(sourcePath)
 	if err != nil {
 		return err
 	}
 
-	// Create the rule directory
-	ruleDir := filepath.Join(cursorDir, ruleName)
-	if err := os.MkdirAll(ruleDir, 0755); err != nil {
-		return err
-	}
-
-	// Build the RULE.md content
-	var ruleContent strings.Builder
-
-	// Extract description from first heading
-	description := extractDescription(string(fileContent), "Workflow step", ruleName)
-
-	ruleContent.WriteString("---\n")
-	ruleContent.WriteString(fmt.Sprintf("description: \"%s\"\n", escapeYAMLString(description)))
-	ruleContent.WriteString("alwaysApply: false\n")
-	ruleContent.WriteString("---\n\n")
-	ruleContent.Write(fileContent)
-
-	// Write the rule file
-	outputPath := filepath.Join(ruleDir, "RULE.md")
-	if err := os.WriteFile(outputPath, []byte(ruleContent.String()), 0644); err != nil {
+	// Commands are flat markdown files - no YAML frontmatter needed
+	outputPath := filepath.Join(commandsDir, commandName+".md")
+	if err := os.WriteFile(outputPath, fileContent, 0644); err != nil {
 		return err
 	}
 
@@ -575,16 +565,8 @@ func (p *CursorProvider) createWorkflowStepRule(fs content.FileSystem, sourcePat
 	return nil
 }
 
-// createWorkflowOrchestrator creates the main workflow rule that references all steps
-func (p *CursorProvider) createWorkflowOrchestrator(cursorDir, workflowName string, steps []templates.WorkflowStep) error {
-	ruleName := fmt.Sprintf("workflow-%s", workflowName)
-
-	// Create the rule directory
-	ruleDir := filepath.Join(cursorDir, ruleName)
-	if err := os.MkdirAll(ruleDir, 0755); err != nil {
-		return err
-	}
-
+// createWorkflowOrchestratorCommand creates the main workflow command that references all steps
+func (p *CursorProvider) createWorkflowOrchestratorCommand(commandsDir, workflowName string, steps []templates.WorkflowStep) error {
 	// Build the orchestrator data
 	data := templates.WorkflowOrchestratorData{
 		WorkflowName: workflowName,
@@ -594,21 +576,12 @@ func (p *CursorProvider) createWorkflowOrchestrator(cursorDir, workflowName stri
 	}
 
 	// Generate orchestrator content using the template
-	// For Cursor, use @ to reference other rules
-	orchestratorContent := templates.GenerateWorkflowOrchestrator(data, "@")
+	// For Cursor commands, use / to reference other commands
+	orchestratorContent := templates.GenerateWorkflowOrchestrator(data, "/")
 
-	// Build the RULE.md content
-	var ruleContent strings.Builder
-
-	ruleContent.WriteString("---\n")
-	ruleContent.WriteString(fmt.Sprintf("description: \"Run the complete %s workflow\"\n", templates.NormalizeWorkflowName(workflowName)))
-	ruleContent.WriteString("alwaysApply: false\n")
-	ruleContent.WriteString("---\n\n")
-	ruleContent.WriteString(orchestratorContent)
-
-	// Write the rule file
-	outputPath := filepath.Join(ruleDir, "RULE.md")
-	if err := os.WriteFile(outputPath, []byte(ruleContent.String()), 0644); err != nil {
+	// Write the command file (no YAML frontmatter for commands)
+	outputPath := filepath.Join(commandsDir, workflowName+".md")
+	if err := os.WriteFile(outputPath, []byte(orchestratorContent), 0644); err != nil {
 		return err
 	}
 
