@@ -176,4 +176,4 @@ Only proceed to commit and finish the work after completing this review process 
 4. If you are developing a backend API, create (check if one exists and update it) a Postman collection with all of the developed ednpoints of the system, including tests ones.
 5. Ask the user to review all changes and if he wants to merge the branch to main.
 
-Addiotnal instructions: #$ARGUMENTS
+Addiotnal instructions: $ARGUMENTS

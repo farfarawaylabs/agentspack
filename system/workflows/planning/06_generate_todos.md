@@ -22,9 +22,9 @@ Then your goal is to write a detailed todo list that we can give to the developm
 - After every backend phase, make sure to have todos for writing tests for the backend API.
 
 ** Output **
-Your output should be a ./agents/plans/TODOS.md file in a format that allows to easily mark items that were done later.
+Your output should be a ./agents/TODOS.md file in a format that allows to easily mark items that were done later.
 
-- The ./agents/plans/TODOS.md must:
+- The ./agents/TODOS.md must:
   - Use checkboxes for tasks.
   - Include a stable Task ID/number for every task (e.g., T-001 or 1.2.3) and display it alongside the checkbox.
   - For every task, include: Lane (FE/BE/Design), Parallelizable (Yes/No), Depends on (task IDs) / Prerequisites, Blockers, Deliverable.
@@ -32,4 +32,4 @@ Your output should be a ./agents/plans/TODOS.md file in a format that allows to 
   - Include a brief dependency overview per phase (a simple ordered list or short diagram is enough).
   - Call out examples where sequencing matters (e.g., "User management API depends on database migrations") to avoid starting blocked work.
 
-Additional instructions: #$ARGUMENTS
+Additional instructions: $ARGUMENTS
