@@ -2,6 +2,11 @@
 
 A command-line tool that generates **provider-specific AI agent context files** for your projects. Stop manually maintaining separate configuration files for Cursor, Claude Code, and Codex — let agentspack generate them all from a unified template library.
 
+## What's New
+
+- **Automatic Postman collection generation** — Agents now create and maintain a Postman collection (under a `postman/` folder) whenever they finish coding or updating an API. Every endpoint includes full documentation, request parameters, body schemas, and realistic examples.
+- **API Guide documentation** — Agents automatically keep a `docs/API_GUIDE.md` file up to date with clear instructions on how to use every endpoint, including all parameters, request/response formats, and example usage.
+
 ## What is agentspack?
 
 Different AI coding assistants expect different "context" formats and folder structures. Teams waste time manually copying, reshaping, and maintaining multiple variants of the same guidance for each tool they use.
@@ -179,6 +184,13 @@ Specialized AI agent prompts:
 Step-by-step process templates:
 
 - **Planning** — PRD creation, market research, development phases, UX research, UI design, todo generation
+
+#### Development Workflows
+
+Unlike planning workflows that follow a sequential multi-step process, development workflows are standalone commands you can run at any time:
+
+- **Start Session** — Run this whenever you begin a new session (e.g., launching `claude`, opening a fresh Cursor chat, or after clearing the agent's context). It ensures the agent reads all key documentation files — the PRD, technical requirements, and existing todos — so it has full project context before you start giving instructions.
+- **Next Todo** — Tells the agent to pick up the next incomplete item from the todos file and work on it following the project's established development best practices: planning, coding, reviewing, and marking the task as complete.
 
 ## Building from Source
 

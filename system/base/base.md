@@ -29,6 +29,13 @@ If the .agents folder exists:
   - **Continue this loop** until no important improvements are suggested
 - Only move to the next subtask after the current one passes review
 
+## Post API Task
+
+After finishing coding or updating any API endpoint:
+
+- **Update the Postman collection** in the `postman/` folder at the project root. If the collection doesn't exist yet, create it. Ensure every endpoint includes full documentation: descriptions, all request parameters, headers, body schemas, and realistic example requests/responses for every field.
+- **Update the `docs/API_GUIDE.md`** file with clear, easy-to-follow instructions on how to use the API. Include all endpoints, HTTP methods, URL parameters, query parameters, request bodies, response formats, and example usage. If the file doesn't exist yet, create it.
+
 ## Task Completion
 
 - When finishing coding always run the build and check for any errors. If there are errors fix them before completing the task

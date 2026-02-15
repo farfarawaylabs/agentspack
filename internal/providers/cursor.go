@@ -515,7 +515,12 @@ func (p *CursorProvider) generateSingleWorkflowCommands(fs content.FileSystem, c
 		stepName = strings.ReplaceAll(stepName, "_", "-")
 
 		// Generate the command name for this step
-		commandName := fmt.Sprintf("%s-%02d-%s", workflowName, order, stepName)
+		var commandName string
+		if matches != nil {
+			commandName = fmt.Sprintf("%s-%02d-%s", workflowName, order, stepName)
+		} else {
+			commandName = fmt.Sprintf("%s-%s", workflowName, stepName)
+		}
 
 		// Read file to extract description
 		fileContent, err := fs.ReadFile(file)

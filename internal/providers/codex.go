@@ -363,7 +363,12 @@ func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skill
 		stepName = strings.ReplaceAll(stepName, "_", "-")
 
 		// Generate the skill name for this step
-		skillName := fmt.Sprintf("workflow-%s-%02d-%s", workflowName, order, stepName)
+		var skillName string
+		if matches != nil {
+			skillName = fmt.Sprintf("workflow-%s-%02d-%s", workflowName, order, stepName)
+		} else {
+			skillName = fmt.Sprintf("workflow-%s-%s", workflowName, stepName)
+		}
 
 		// Read file to extract description
 		fileContent, err := fs.ReadFile(file)
