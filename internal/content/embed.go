@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 //go:embed all:system
@@ -37,7 +39,7 @@ func (e *EmbeddedFS) ReadDir(path string) ([]fs.DirEntry, error) {
 }
 
 func (e *EmbeddedFS) Glob(pattern string) ([]string, error) {
-	return fs.Glob(e.fs, pattern)
+	return doublestar.Glob(e.fs, filepath.ToSlash(pattern))
 }
 
 func (e *EmbeddedFS) Stat(path string) (fs.FileInfo, error) {
@@ -67,21 +69,16 @@ func (l *LocalFS) ReadDir(path string) ([]fs.DirEntry, error) {
 }
 
 func (l *LocalFS) Glob(pattern string) ([]string, error) {
-	fullPattern := filepath.Join(l.baseDir, pattern)
-	matches, err := filepath.Glob(fullPattern)
+	// Use doublestar to support recursive ** patterns, matching embedded fs.Glob behavior.
+	matches, err := doublestar.Glob(os.DirFS(l.baseDir), filepath.ToSlash(pattern))
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert absolute paths back to relative paths (matching embedded FS behavior)
-	result := make([]string, len(matches))
-	for i, match := range matches {
-		rel, err := filepath.Rel(l.baseDir, match)
-		if err != nil {
-			result[i] = match
-		} else {
-			result[i] = rel
-		}
+	// Convert slash-separated paths from fs.FS back to OS-specific separators.
+	result := make([]string, 0, len(matches))
+	for _, match := range matches {
+		result = append(result, filepath.FromSlash(match))
 	}
 	return result, nil
 }

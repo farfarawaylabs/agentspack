@@ -47,17 +47,21 @@ var codexStackConfigs = map[string]struct {
 }
 
 func (p *CodexProvider) Generate(config *wizard.Config, fs content.FileSystem, outputDir string) error {
-	// Create the .codex directory structure
-	codexDir := filepath.Join(outputDir, ".codex")
-	skillsDir := filepath.Join(codexDir, "skills")
+	// Create the .agents/skills directory structure (Codex scans .agents/skills)
+	skillsDir := filepath.Join(outputDir, ".agents", "skills")
 
 	if err := os.MkdirAll(skillsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create codex directory: %w", err)
+		return fmt.Errorf("failed to create codex skills directory: %w", err)
 	}
 
 	// 1. Generate AGENTS.md with global rules (always applied)
 	if err := p.generateAgentsMD(fs, outputDir, config.GenerateBase); err != nil {
 		return fmt.Errorf("failed to generate AGENTS.md: %w", err)
+	}
+
+	invocationSettings, invocationWarning := resolveInvocationSettings(config.InvocationProfile, p.Name())
+	if invocationWarning != "" {
+		fmt.Println(invocationWarning)
 	}
 
 	// 2. Generate tech stack skills
@@ -67,19 +71,29 @@ func (p *CodexProvider) Generate(config *wizard.Config, fs content.FileSystem, o
 			fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
 			continue
 		}
-		if err := p.generateStackSkill(fs, skillsDir, stack, stackConfig); err != nil {
+		if err := p.generateStackSkill(fs, skillsDir, stack, stackConfig, invocationSettings); err != nil {
 			return fmt.Errorf("failed to generate %s skill: %w", stack, err)
 		}
 	}
 
-	// 3. Generate agent skills
-	if err := p.generateAgentSkills(fs, skillsDir); err != nil {
+	// 3. Generate reusable base skills for all providers.
+	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings); err != nil {
+		return fmt.Errorf("failed to generate base skills: %w", err)
+	}
+
+	// 4. Generate agent skills
+	if err := p.generateAgentSkills(fs, skillsDir, invocationSettings); err != nil {
 		return fmt.Errorf("failed to generate agent skills: %w", err)
 	}
 
-	// 4. Generate workflow skills
-	if err := p.generateWorkflowSkills(fs, skillsDir); err != nil {
+	// 5. Generate workflow skills
+	if err := p.generateWorkflowSkills(fs, skillsDir, invocationSettings); err != nil {
 		return fmt.Errorf("failed to generate workflow skills: %w", err)
+	}
+
+	// 6. Generate direct command skills from system/commands.
+	if err := p.generateSystemCommandSkills(fs, skillsDir, invocationSettings); err != nil {
+		return fmt.Errorf("failed to generate system command skills: %w", err)
 	}
 
 	return nil
@@ -153,7 +167,7 @@ func (p *CodexProvider) generateStackSkill(fs content.FileSystem, skillsDir, sta
 	SkillName        string
 	Description      string
 	ShortDescription string
-}) error {
+}, invocationSettings SkillInvocationSettings) error {
 	// Create skill directory
 	skillDir := filepath.Join(skillsDir, config.SkillName)
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -171,7 +185,7 @@ func (p *CodexProvider) generateStackSkill(fs content.FileSystem, skillsDir, sta
 	subPattern := fmt.Sprintf("system/rules/%s/**/*.md", config.SourcePath)
 	subFiles, err := fs.Glob(subPattern)
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	if len(files) == 0 {
@@ -194,22 +208,23 @@ func (p *CodexProvider) generateStackSkill(fs content.FileSystem, skillsDir, sta
 		allContent.WriteString("\n")
 	}
 
-	// Build SKILL.md content
-	var skillContent strings.Builder
-
-	skillContent.WriteString("---\n")
-	skillContent.WriteString(fmt.Sprintf("name: %s\n", config.SkillName))
-	skillContent.WriteString(fmt.Sprintf("description: %s\n", config.Description))
-	skillContent.WriteString("metadata:\n")
-	skillContent.WriteString(fmt.Sprintf("  short-description: %s\n", config.ShortDescription))
-	skillContent.WriteString("---\n\n")
-
-	skillContent.WriteString(fmt.Sprintf("# %s Guidelines\n\n", templates.NormalizeWorkflowName(stackName)))
-	skillContent.WriteString(allContent.String())
+	skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+		Name:                   config.SkillName,
+		Description:            config.Description,
+		Heading:                fmt.Sprintf("%s Guidelines", templates.NormalizeWorkflowName(stackName)),
+		Body:                   allContent.String(),
+		DisableModelInvocation: invocationSettings.DisableModelInvocation,
+		Metadata: map[string]any{
+			"short-description": config.ShortDescription,
+		},
+	})
+	if err != nil {
+		return err
+	}
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(outputPath, []byte(skillContent.String()), 0644); err != nil {
+	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), config.SkillName); err != nil {
 		return err
 	}
 
@@ -217,8 +232,39 @@ func (p *CodexProvider) generateStackSkill(fs content.FileSystem, skillsDir, sta
 	return nil
 }
 
+func (p *CodexProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+	files, err := listBaseSkillTemplates(fs)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+
+	for _, file := range files {
+		skillName, skillMarkdown, err := buildBaseSkillFromTemplate(fs, file, invocationSettings, false)
+		if err != nil {
+			return err
+		}
+
+		skillDir := filepath.Join(skillsDir, skillName)
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			return err
+		}
+
+		outputPath := filepath.Join(skillDir, "SKILL.md")
+		if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
+			return err
+		}
+
+		fmt.Printf("  Created: %s\n", outputPath)
+	}
+
+	return nil
+}
+
 // generateAgentSkills creates skills for each agent
-func (p *CodexProvider) generateAgentSkills(fs content.FileSystem, skillsDir string) error {
+func (p *CodexProvider) generateAgentSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
 	// Check if agents directory exists
 	if _, err := fs.Stat("system/agents"); err != nil {
 		return nil
@@ -233,11 +279,11 @@ func (p *CodexProvider) generateAgentSkills(fs content.FileSystem, skillsDir str
 	// Also check subdirectories (e.g., system/agents/backend/*.md)
 	subFiles, err := fs.Glob("system/agents/**/*.md")
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	for _, file := range files {
-		if err := p.createAgentSkill(fs, file, skillsDir); err != nil {
+		if err := p.createAgentSkill(fs, file, skillsDir, invocationSettings); err != nil {
 			return err
 		}
 	}
@@ -246,7 +292,7 @@ func (p *CodexProvider) generateAgentSkills(fs content.FileSystem, skillsDir str
 }
 
 // createAgentSkill creates a Codex skill from an agent markdown file
-func (p *CodexProvider) createAgentSkill(fs content.FileSystem, sourcePath, skillsDir string) error {
+func (p *CodexProvider) createAgentSkill(fs content.FileSystem, sourcePath, skillsDir string, invocationSettings SkillInvocationSettings) error {
 	fileContent, err := fs.ReadFile(sourcePath)
 	if err != nil {
 		return err
@@ -256,11 +302,13 @@ func (p *CodexProvider) createAgentSkill(fs content.FileSystem, sourcePath, skil
 
 	// Parse frontmatter to extract agent metadata
 	agentName, description, bodyContent := parseAgentFrontmatter(contentStr)
+	if strings.TrimSpace(bodyContent) == "" {
+		bodyContent = contentStr
+	}
 
 	// Generate skill name from filename if not in frontmatter
 	if agentName == "" {
-		baseName := filepath.Base(sourcePath)
-		agentName = strings.TrimSuffix(baseName, ".md")
+		agentName = agentNameFromSourcePath(sourcePath)
 	}
 
 	// Normalize the name
@@ -277,21 +325,22 @@ func (p *CodexProvider) createAgentSkill(fs content.FileSystem, sourcePath, skil
 		description = fmt.Sprintf("Agent: %s", agentName)
 	}
 
-	// Build SKILL.md content
-	var skillContent strings.Builder
-
-	skillContent.WriteString("---\n")
-	skillContent.WriteString(fmt.Sprintf("name: %s\n", skillName))
-	skillContent.WriteString(fmt.Sprintf("description: %s\n", escapeYAMLString(description)))
-	skillContent.WriteString("metadata:\n")
-	skillContent.WriteString(fmt.Sprintf("  short-description: %s agent\n", templates.NormalizeWorkflowName(agentName)))
-	skillContent.WriteString("---\n\n")
-
-	skillContent.WriteString(bodyContent)
+	skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+		Name:                   skillName,
+		Description:            description,
+		Body:                   bodyContent,
+		DisableModelInvocation: invocationSettings.DisableModelInvocation,
+		Metadata: map[string]any{
+			"short-description": fmt.Sprintf("%s agent", templates.NormalizeWorkflowName(agentName)),
+		},
+	})
+	if err != nil {
+		return err
+	}
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(outputPath, []byte(skillContent.String()), 0644); err != nil {
+	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
 		return err
 	}
 
@@ -300,7 +349,7 @@ func (p *CodexProvider) createAgentSkill(fs content.FileSystem, sourcePath, skil
 }
 
 // generateWorkflowSkills creates skills for workflows
-func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir string) error {
+func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
 	// Check if workflows directory exists
 	if _, err := fs.Stat("system/workflows"); err != nil {
 		return nil
@@ -319,7 +368,7 @@ func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir 
 
 		workflowName := entry.Name()
 
-		if err := p.generateSingleWorkflowSkill(fs, skillsDir, workflowName); err != nil {
+		if err := p.generateSingleWorkflowSkill(fs, skillsDir, workflowName, invocationSettings); err != nil {
 			return fmt.Errorf("failed to generate workflow skill '%s': %w", workflowName, err)
 		}
 	}
@@ -328,7 +377,7 @@ func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir 
 }
 
 // generateSingleWorkflowSkill creates step skills and an orchestrator skill for one workflow
-func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skillsDir, workflowName string) error {
+func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skillsDir, workflowName string, invocationSettings SkillInvocationSettings) error {
 	// Find all markdown files in the workflow directory
 	pattern := fmt.Sprintf("system/workflows/%s/*.md", workflowName)
 	files, err := fs.Glob(pattern)
@@ -386,7 +435,7 @@ func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skill
 		})
 
 		// Create the step skill
-		if err := p.createWorkflowStepSkill(fs, file, skillsDir, skillName, workflowName); err != nil {
+		if err := p.createWorkflowStepSkill(fs, file, skillsDir, skillName, workflowName, invocationSettings); err != nil {
 			return err
 		}
 	}
@@ -397,14 +446,18 @@ func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skill
 	})
 
 	// Create the workflow orchestrator skill
-	return p.createWorkflowOrchestratorSkill(skillsDir, workflowName, steps)
+	return p.createWorkflowOrchestratorSkill(skillsDir, workflowName, steps, invocationSettings)
 }
 
 // createWorkflowStepSkill creates a Codex skill for a single workflow step
-func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePath, skillsDir, skillName, workflowName string) error {
+func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePath, skillsDir, skillName, workflowName string, invocationSettings SkillInvocationSettings) error {
 	fileContent, err := fs.ReadFile(sourcePath)
 	if err != nil {
 		return err
+	}
+	_, _, stepBody := parseAgentFrontmatter(string(fileContent))
+	if strings.TrimSpace(stepBody) == "" {
+		stepBody = string(fileContent)
 	}
 
 	// Create skill directory
@@ -414,22 +467,24 @@ func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePat
 	}
 
 	// Extract description from first heading
-	description := extractDescription(string(fileContent), "Workflow step", skillName)
+	description := extractDescription(stepBody, "Workflow step", skillName)
 
-	// Build SKILL.md content
-	var skillContent strings.Builder
-
-	skillContent.WriteString("---\n")
-	skillContent.WriteString(fmt.Sprintf("name: %s\n", skillName))
-	skillContent.WriteString(fmt.Sprintf("description: %s\n", escapeYAMLString(description)))
-	skillContent.WriteString("metadata:\n")
-	skillContent.WriteString(fmt.Sprintf("  short-description: %s workflow step\n", templates.NormalizeWorkflowName(workflowName)))
-	skillContent.WriteString("---\n\n")
-	skillContent.Write(fileContent)
+	skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+		Name:                   skillName,
+		Description:            description,
+		Body:                   stepBody,
+		DisableModelInvocation: invocationSettings.DisableModelInvocation,
+		Metadata: map[string]any{
+			"short-description": fmt.Sprintf("%s workflow step", templates.NormalizeWorkflowName(workflowName)),
+		},
+	})
+	if err != nil {
+		return err
+	}
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(outputPath, []byte(skillContent.String()), 0644); err != nil {
+	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
 		return err
 	}
 
@@ -438,7 +493,7 @@ func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePat
 }
 
 // createWorkflowOrchestratorSkill creates the main workflow skill that references all steps
-func (p *CodexProvider) createWorkflowOrchestratorSkill(skillsDir, workflowName string, steps []templates.WorkflowStep) error {
+func (p *CodexProvider) createWorkflowOrchestratorSkill(skillsDir, workflowName string, steps []templates.WorkflowStep, invocationSettings SkillInvocationSettings) error {
 	skillName := fmt.Sprintf("workflow-%s", workflowName)
 
 	// Create skill directory
@@ -459,23 +514,24 @@ func (p *CodexProvider) createWorkflowOrchestratorSkill(skillsDir, workflowName 
 	// For Codex, use $ to reference other skills
 	orchestratorContent := templates.GenerateWorkflowOrchestrator(data, "$")
 
-	// Build SKILL.md content
-	var skillContent strings.Builder
-
 	// Generate workflow-specific description
 	workflowDescription := generateWorkflowDescription(workflowName, len(steps))
-
-	skillContent.WriteString("---\n")
-	skillContent.WriteString(fmt.Sprintf("name: %s\n", skillName))
-	skillContent.WriteString(fmt.Sprintf("description: %s\n", workflowDescription))
-	skillContent.WriteString("metadata:\n")
-	skillContent.WriteString(fmt.Sprintf("  short-description: Complete %s workflow (%d steps)\n", templates.NormalizeWorkflowName(workflowName), len(steps)))
-	skillContent.WriteString("---\n\n")
-	skillContent.WriteString(orchestratorContent)
+	skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+		Name:                   skillName,
+		Description:            workflowDescription,
+		Body:                   orchestratorContent,
+		DisableModelInvocation: invocationSettings.DisableModelInvocation,
+		Metadata: map[string]any{
+			"short-description": fmt.Sprintf("Complete %s workflow (%d steps)", templates.NormalizeWorkflowName(workflowName), len(steps)),
+		},
+	})
+	if err != nil {
+		return err
+	}
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(outputPath, []byte(skillContent.String()), 0644); err != nil {
+	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
 		return err
 	}
 
@@ -497,4 +553,53 @@ func generateWorkflowDescription(workflowName string, stepCount int) string {
 	// Default description for unknown workflows
 	displayName := templates.NormalizeWorkflowName(workflowName)
 	return fmt.Sprintf("Run the complete %s workflow with %d sequential steps. Use when you need to execute this structured process from start to finish.", displayName, stepCount)
+}
+
+func (p *CodexProvider) generateSystemCommandSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+	commands, err := listSystemCommandTemplates(fs)
+	if err != nil {
+		return err
+	}
+	if len(commands) == 0 {
+		return nil
+	}
+
+	for _, command := range commands {
+		skillDir := filepath.Join(skillsDir, command.Name)
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			return err
+		}
+
+		skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+			Name:                   command.Name,
+			Description:            command.Description,
+			Body:                   command.Body,
+			DisableModelInvocation: invocationSettings.DisableModelInvocation,
+			Metadata: map[string]any{
+				"short-description": fmt.Sprintf("Command: %s", command.Name),
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		outputPath := filepath.Join(skillDir, "SKILL.md")
+		if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), command.Name); err != nil {
+			return err
+		}
+
+		fmt.Printf("  Created: %s\n", outputPath)
+	}
+
+	return nil
+}
+
+func writeSkillFileIfAbsent(outputPath string, content []byte, skillName string) error {
+	if _, err := os.Stat(outputPath); err == nil {
+		return fmt.Errorf("skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	return os.WriteFile(outputPath, content, 0644)
 }

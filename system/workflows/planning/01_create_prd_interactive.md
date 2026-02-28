@@ -76,7 +76,7 @@ You're ready to write when you can clearly articulate:
 
 ### Phase 3: Write the PRD
 
-Once you have the information, produce the PRD and save it to `.agents/product/PRD.md`
+Once you have the information, produce the PRD and save it to `.agentspack/product/PRD.md`
 
 ## PRD Template
 
@@ -235,7 +235,7 @@ If any are missing, ask targeted questions to fill the gaps.
 
 ## Output
 
-Save the completed PRD to: `.agents/product/PRD.md`
+Save the completed PRD to: `.agentspack/product/PRD.md`
 
 After saving, summarize:
 

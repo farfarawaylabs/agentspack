@@ -18,7 +18,7 @@
 
 Development teams using multiple AI coding assistants face a recurring problem:
 
-1. **Different providers require different formats** — Cursor uses `.cursor/rules/`, Claude Code uses `.claude/`, Codex uses `.codex/skills/`
+1. **Different providers require different formats** — Cursor uses `.cursor/` conventions, Claude Code uses `.claude/`, Codex uses `.agents/skills/`
 2. **Manual duplication is error-prone** — Teams copy-paste the same guidance across multiple files, leading to inconsistencies
 3. **Maintenance becomes a burden** — Updating a single coding standard requires editing 3+ files across different formats
 4. **No standardization** — Teams waste time creating their own templates from scratch
@@ -109,9 +109,9 @@ type Provider interface {
 
 **Current Providers:**
 
-- **Cursor** — Generates `.cursor/rules/` with RULE.md files and frontmatter
+- **Cursor** — Generates `.cursor/` with rules, skills, and commands
 - **Claude Code** — Generates `.claude/` with rules, skills, agents, and commands
-- **Codex** — Generates `.codex/` with AGENTS.md and skills
+- **Codex** — Generates `.agents/skills/` with AGENTS.md
 
 #### 5. **Templates** (`internal/templates/`)
 
@@ -131,6 +131,17 @@ Provider-specific base instructions that set workflow expectations:
 - `Cursor.md` — Cursor-specific instructions
 - `Claude.md` — Claude Code-specific instructions
 - `Codex.md` — Codex-specific instructions
+
+### `system/base-skills/`
+
+Canonical cross-platform skill sources that are always transformed into provider-native skill outputs:
+
+- `*.md` files with skill frontmatter (`name`, `description`) and markdown body
+- Supports nested subdirectories for organization
+- Generated to:
+  - Cursor: `.cursor/skills/{skill-name}/SKILL.md`
+  - Claude Code: `.claude/skills/{skill-name}/SKILL.md`
+  - Codex: `.agents/skills/{skill-name}/SKILL.md`
 
 ### `system/rules/`
 
@@ -185,8 +196,11 @@ Workflow files are numbered (e.g., `01_create_prd.md`, `02_run_market_research.m
 │   │   └── RULE.md              # Individual rule with globs
 │   ├── agent-{name}/
 │   │   └── RULE.md              # Agent as invokable rule
-│   └── workflow-{name}/
-│       └── RULE.md              # Workflow orchestrator
+├── skills/
+│   └── backend-guidelines/      # Tech stack skills (if skills mode)
+│       └── SKILL.md
+├── commands/
+│   └── {workflow-name}.md       # Workflow commands
 └── AGENTS.md                    # Base instructions (if requested)
 ```
 
@@ -220,7 +234,7 @@ CLAUDE.md                        # Base instructions (if requested)
 ### Codex
 
 ```
-.codex/
+.agents/
 └── skills/
     ├── backend-guidelines/
     │   └── SKILL.md
@@ -240,10 +254,11 @@ AGENTS.md                        # Base + global rules (always generated)
 No config files needed — just run `agentspack` and follow the prompts:
 
 1. Select providers (multi-select)
-2. Choose Claude Code mode (rules vs skills) if applicable
-3. Select tech stacks (multi-select)
-4. Choose whether to generate base file
-5. Specify output directory (supports `~/`, absolute, and relative paths)
+2. Choose guidelines mode (rules vs skills) when Cursor and/or Claude Code is selected
+3. Choose skill invocation profile when skills are generated (`dual`, `manual-only`, `auto-only`)
+4. Select tech stacks (multi-select)
+5. Choose whether to generate base file
+6. Specify output directory (supports `~/`, absolute, and relative paths)
 
 ### 2. Embedded Templates
 
@@ -490,7 +505,8 @@ type Config struct {
     TechStacks      []string
     GenerateBase    bool
     OutputDir       string
-    ClaudeCodeMode  ClaudeCodeMode // "rules" or "skills"
+    GuidelinesMode  GuidelinesMode // "rules" or "skills"
+    InvocationProfile SkillInvocationProfile // "dual", "manual-only", or "auto-only"
 }
 ```
 

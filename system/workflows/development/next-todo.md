@@ -2,10 +2,10 @@
 
 ## 01. Preparation:
 
-- If you didn't do it already, read .agents/prd.md, .agents/technical_requirements.md and .agents/todos.md to understand the project and current progress.
-- Read any relevant files in the .agents/docs folder (if it exists) for prior implementation details.
-- Ensure subagents read all relevant files in the .agents folder to grasp requirements and context.
-- Create a new branch for the work, and when you finish the work, commit all changes and update .agents/todos.md when the task is finished. Ask the user if he wants to merge the branch to main.
+- If you didn't do it already, read .agentspack/prd.md, .agentspack/technical_requirements.md and .agentspack/todos.md to understand the project and current progress.
+- Read any relevant files in the .agentspack/docs folder (if it exists) for prior implementation details.
+- Ensure subagents read all relevant files in the .agentspack folder to grasp requirements and context.
+- Create a new branch for the work, and when you finish the work, commit all changes and update .agentspack/todos.md when the task is finished. Ask the user if he wants to merge the branch to main.
 
 ## 02. Delegation:
 
@@ -13,8 +13,8 @@
 
 ## 03. Planning gate (before coding):
 
-1.  Check the ./agents/plans folder and see if a plan already exists for the task.
-2.  If a plan does not exist, create it first and save it to this folder. Name the file using the Task ID so it’s easy to find and connect to the todo task (e.g., ./agents/plans/T-001.md). The plan should be a detailed description of what the agent is about to do and how it plans to implement the task. After writing the plan, stop and allow the user to review it before proceeding.
+1.  Check the ./.agentspack/plans folder and see if a plan already exists for the task.
+2.  If a plan does not exist, create it first and save it to this folder. Name the file using the Task ID so it’s easy to find and connect to the todo task (e.g., ./.agentspack/plans/T-001.md). The plan should be a detailed description of what the agent is about to do and how it plans to implement the task. After writing the plan, stop and allow the user to review it before proceeding.
 3.  If a plan already exists, read it carefully and only then move to the implementation phase.
 4.  After writing the plan, make sure to read it carfully, review it and see if something was missed.
 
@@ -171,8 +171,8 @@ Only proceed to commit and finish the work after completing this review process 
 ## 05. Finish work
 
 1. Commit all the changes to the branch.
-2. Update the .agents/todos.md
-3. Add a documents to the .agents/docs detailing your work, how to use it and how to test it. Make sure we don't just detail how to run unit tests, but also how to run full integration tests of the system (if possible at this phase).
+2. Update the .agentspack/todos.md
+3. Add a documents to the .agentspack/docs detailing your work, how to use it and how to test it. Make sure we don't just detail how to run unit tests, but also how to run full integration tests of the system (if possible at this phase).
 4. If you are developing a backend API, create (check if one exists and update it) a Postman collection with all of the developed ednpoints of the system, including tests ones.
 5. Ask the user to review all changes and if he wants to merge the branch to main.
 

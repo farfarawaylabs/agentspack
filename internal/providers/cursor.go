@@ -31,27 +31,32 @@ type TechStackConfig struct {
 	SourcePath string
 	// Globs are the file patterns this stack applies to
 	Globs []string
-	// Description prefix for the rules
-	Description string
+	// RuleDescriptionPrefix is used when deriving concise rule descriptions.
+	RuleDescriptionPrefix string
+	// SkillDescription explains when the generated skill should be invoked.
+	SkillDescription string
 }
 
 // techStackConfigs maps wizard tech stack choices to their configurations
 var techStackConfigs = map[string]TechStackConfig{
 	"react": {
-		SourcePath:  "frontend/react",
-		Globs:       []string{"*.tsx", "*.jsx", "src/components/**", "src/pages/**", "src/app/**"},
-		Description: "React component",
+		SourcePath:            "frontend/react",
+		Globs:                 []string{"*.tsx", "*.jsx", "src/components/**", "src/pages/**", "src/app/**"},
+		RuleDescriptionPrefix: "React component",
+		SkillDescription:      "Best practices for React development. Use when building React components, managing state with hooks, creating reusable UI elements, or working with JSX/TSX files.",
 	},
 	"backend": {
-		SourcePath:  "backend",
-		Globs:       []string{"*.go", "*.py", "*.ts", "src/api/**", "src/server/**", "api/**", "server/**"},
-		Description: "Backend API",
+		SourcePath:            "backend",
+		Globs:                 []string{"*.go", "*.py", "*.ts", "src/api/**", "src/server/**", "api/**", "server/**"},
+		RuleDescriptionPrefix: "Backend API",
+		SkillDescription:      "Best practices for backend development. Use when building APIs, working with databases, designing data models, implementing authentication, or writing server-side logic.",
 	},
 }
 
 func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, outputDir string) error {
 	// Create the output directory structure directly in the user's chosen directory
 	rulesDir := filepath.Join(outputDir, ".cursor", "rules")
+	skillsDir := filepath.Join(outputDir, ".cursor", "skills")
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
 		return fmt.Errorf("failed to create cursor rules directory: %w", err)
 	}
@@ -74,26 +79,57 @@ func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, 
 		return fmt.Errorf("failed to generate global rules: %w", err)
 	}
 
-	// 2. Generate tech stack specific rules
-	for _, stack := range config.TechStacks {
-		stackConfig, ok := techStackConfigs[stack]
-		if !ok {
-			fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
-			continue
+	invocationSettings, invocationWarning := resolveInvocationSettings(config.InvocationProfile, p.Name())
+	if invocationWarning != "" {
+		fmt.Println(invocationWarning)
+	}
+
+	// 2. Generate tech stack guidance in the selected mode.
+	if config.GuidelinesMode == wizard.GuidelinesModeSkills {
+		if err := os.MkdirAll(skillsDir, 0755); err != nil {
+			return fmt.Errorf("failed to create cursor skills directory: %w", err)
 		}
-		if err := p.generateStackRules(fs, rulesDir, stack, stackConfig); err != nil {
-			return fmt.Errorf("failed to generate %s rules: %w", stack, err)
+		for _, stack := range config.TechStacks {
+			stackConfig, ok := techStackConfigs[stack]
+			if !ok {
+				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
+				continue
+			}
+			if err := p.generateStackSkill(fs, skillsDir, stack, stackConfig, invocationSettings); err != nil {
+				return fmt.Errorf("failed to generate %s skill: %w", stack, err)
+			}
+		}
+	} else {
+		for _, stack := range config.TechStacks {
+			stackConfig, ok := techStackConfigs[stack]
+			if !ok {
+				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
+				continue
+			}
+			if err := p.generateStackRules(fs, rulesDir, stack, stackConfig); err != nil {
+				return fmt.Errorf("failed to generate %s rules: %w", stack, err)
+			}
 		}
 	}
 
-	// 3. Generate agent rules
+	// 3. Generate reusable base skills for all providers.
+	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings); err != nil {
+		return fmt.Errorf("failed to generate base skills: %w", err)
+	}
+
+	// 4. Generate agent rules
 	if err := p.generateAgentRules(fs, rulesDir); err != nil {
 		return fmt.Errorf("failed to generate agent rules: %w", err)
 	}
 
-	// 4. Generate workflow commands (Cursor supports /commands like Claude Code)
+	// 5. Generate workflow commands (Cursor supports /commands like Claude Code)
 	if err := p.generateWorkflowCommands(fs, commandsDir); err != nil {
 		return fmt.Errorf("failed to generate workflow commands: %w", err)
+	}
+
+	// 6. Generate direct commands from system/commands.
+	if err := p.generateSystemCommands(fs, commandsDir); err != nil {
+		return fmt.Errorf("failed to generate system commands: %w", err)
 	}
 
 	return nil
@@ -197,7 +233,7 @@ func (p *CursorProvider) generateStackRules(fs content.FileSystem, cursorDir, st
 	subPattern := fmt.Sprintf("system/rules/%s/**/*.md", config.SourcePath)
 	subFiles, err := fs.Glob(subPattern)
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	for _, file := range files {
@@ -233,7 +269,7 @@ func (p *CursorProvider) createRuleFromFile(fs content.FileSystem, sourcePath, c
 	var ruleContent strings.Builder
 
 	// Extract a description from the first heading or use filename
-	description := extractDescription(string(fileContent), config.Description, ruleName)
+	description := extractDescription(string(fileContent), config.RuleDescriptionPrefix, ruleName)
 
 	ruleContent.WriteString("---\n")
 	ruleContent.WriteString(fmt.Sprintf("description: \"%s\"\n", description))
@@ -249,6 +285,103 @@ func (p *CursorProvider) createRuleFromFile(fs content.FileSystem, sourcePath, c
 	}
 
 	fmt.Printf("  Created: %s\n", outputPath)
+	return nil
+}
+
+// generateStackSkill creates a Cursor skill for a tech stack by concatenating rule templates.
+func (p *CursorProvider) generateStackSkill(fs content.FileSystem, skillsDir, stackName string, config TechStackConfig, invocationSettings SkillInvocationSettings) error {
+	skillName := fmt.Sprintf("%s-guidelines", strings.ReplaceAll(stackName, "_", "-"))
+	skillDir := filepath.Join(skillsDir, skillName)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		return err
+	}
+
+	pattern := fmt.Sprintf("system/rules/%s/*.md", config.SourcePath)
+	files, err := fs.Glob(pattern)
+	if err != nil {
+		return err
+	}
+
+	subPattern := fmt.Sprintf("system/rules/%s/**/*.md", config.SourcePath)
+	subFiles, err := fs.Glob(subPattern)
+	if err == nil {
+		files = mergeUniquePaths(files, subFiles)
+	}
+
+	if len(files) == 0 {
+		return nil
+	}
+
+	var allContent strings.Builder
+	for i, file := range files {
+		fileContent, err := fs.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if i > 0 {
+			allContent.WriteString("\n---\n\n")
+		}
+		allContent.Write(fileContent)
+		allContent.WriteString("\n")
+	}
+
+	skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+		Name:                   skillName,
+		Description:            config.SkillDescription,
+		Heading:                fmt.Sprintf("%s Guidelines", templates.NormalizeWorkflowName(stackName)),
+		Body:                   allContent.String(),
+		DisableModelInvocation: invocationSettings.DisableModelInvocation,
+	})
+	if err != nil {
+		return err
+	}
+
+	outputPath := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(outputPath, []byte(skillMarkdown), 0644); err != nil {
+		return err
+	}
+
+	fmt.Printf("  Created: %s\n", outputPath)
+	return nil
+}
+
+func (p *CursorProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+	files, err := listBaseSkillTemplates(fs)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		skillName, skillMarkdown, err := buildBaseSkillFromTemplate(fs, file, invocationSettings, false)
+		if err != nil {
+			return err
+		}
+
+		skillDir := filepath.Join(skillsDir, skillName)
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			return err
+		}
+
+		outputPath := filepath.Join(skillDir, "SKILL.md")
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("base skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.WriteFile(outputPath, []byte(skillMarkdown), 0644); err != nil {
+			return err
+		}
+
+		fmt.Printf("  Created: %s\n", outputPath)
+	}
+
 	return nil
 }
 
@@ -300,7 +433,7 @@ func (p *CursorProvider) generateAgentRules(fs content.FileSystem, cursorDir str
 	// Also check subdirectories (e.g., system/agents/backend/*.md)
 	subFiles, err := fs.Glob("system/agents/**/*.md")
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	for _, file := range files {
@@ -327,8 +460,7 @@ func (p *CursorProvider) createAgentRule(fs content.FileSystem, sourcePath, curs
 
 	// Generate rule name from filename if not in frontmatter
 	if agentName == "" {
-		baseName := filepath.Base(sourcePath)
-		agentName = strings.TrimSuffix(baseName, ".md")
+		agentName = agentNameFromSourcePath(sourcePath)
 	}
 
 	// Normalize the name (replace underscores with hyphens)
@@ -366,80 +498,10 @@ func (p *CursorProvider) createAgentRule(fs content.FileSystem, sourcePath, curs
 	return nil
 }
 
-// parseAgentFrontmatter extracts name, description, and body from agent markdown
-func parseAgentFrontmatter(content string) (name, description, body string) {
-	// Check if content starts with frontmatter
-	if !strings.HasPrefix(content, "---") {
-		return "", "", content
-	}
-
-	// Find the end of frontmatter
-	endIndex := strings.Index(content[3:], "---")
-	if endIndex == -1 {
-		return "", "", content
-	}
-
-	frontmatter := content[3 : endIndex+3]
-	body = strings.TrimSpace(content[endIndex+6:])
-
-	// Parse frontmatter fields
-	lines := strings.Split(frontmatter, "\n")
-	var descLines []string
-	inDescription := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Check for name field
-		if strings.HasPrefix(trimmed, "name:") {
-			name = strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
-			inDescription = false
-			continue
-		}
-
-		// Check for description field (can be multi-line)
-		if strings.HasPrefix(trimmed, "description:") {
-			descValue := strings.TrimSpace(strings.TrimPrefix(trimmed, "description:"))
-			if descValue != "" && descValue != "|" {
-				descLines = append(descLines, descValue)
-			}
-			inDescription = true
-			continue
-		}
-
-		// Check for other fields that end description
-		if strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, " ") {
-			inDescription = false
-			continue
-		}
-
-		// Continue collecting description lines
-		if inDescription && trimmed != "" {
-			descLines = append(descLines, trimmed)
-		}
-	}
-
-	// Join description lines, taking first meaningful line for Cursor
-	if len(descLines) > 0 {
-		// For Cursor, we want a concise description - take the first sentence or line
-		fullDesc := strings.Join(descLines, " ")
-		// Clean up and truncate if needed
-		description = strings.TrimSpace(fullDesc)
-		// Take first sentence if description is too long
-		if len(description) > 200 {
-			if idx := strings.Index(description, ". "); idx > 0 && idx < 200 {
-				description = description[:idx+1]
-			} else if len(description) > 200 {
-				description = description[:197] + "..."
-			}
-		}
-	}
-
-	return name, description, body
-}
-
 // escapeYAMLString escapes special characters in a YAML string value
 func escapeYAMLString(s string) string {
+	// Escape backslashes first to avoid double-processing.
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	// Replace double quotes with escaped quotes
 	s = strings.ReplaceAll(s, "\"", "\\\"")
 	// Replace newlines
@@ -591,5 +653,32 @@ func (p *CursorProvider) createWorkflowOrchestratorCommand(commandsDir, workflow
 	}
 
 	fmt.Printf("  Created: %s\n", outputPath)
+	return nil
+}
+
+func (p *CursorProvider) generateSystemCommands(fs content.FileSystem, commandsDir string) error {
+	commands, err := listSystemCommandTemplates(fs)
+	if err != nil {
+		return err
+	}
+	if len(commands) == 0 {
+		return nil
+	}
+
+	for _, command := range commands {
+		outputPath := filepath.Join(commandsDir, command.Name+".md")
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("system command '%s' conflicts with an existing command at %s", command.Name, outputPath)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+
+		if err := os.WriteFile(outputPath, []byte(command.Body), 0644); err != nil {
+			return err
+		}
+
+		fmt.Printf("  Created: %s\n", outputPath)
+	}
+
 	return nil
 }

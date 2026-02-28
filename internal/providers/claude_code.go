@@ -74,8 +74,13 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 		return fmt.Errorf("failed to generate global rules: %w", err)
 	}
 
+	invocationSettings, invocationWarning := resolveInvocationSettings(config.InvocationProfile, p.Name())
+	if invocationWarning != "" {
+		fmt.Println(invocationWarning)
+	}
+
 	// 2. Generate tech stack content based on user's mode choice
-	if config.ClaudeCodeMode == wizard.ClaudeCodeModeSkills {
+	if config.GuidelinesMode == wizard.GuidelinesModeSkills {
 		// Skills mode: generate skills for tech stacks
 		if err := os.MkdirAll(skillsDir, 0755); err != nil {
 			return fmt.Errorf("failed to create skills directory: %w", err)
@@ -86,7 +91,7 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
 				continue
 			}
-			if err := p.generateStackSkill(fs, skillsDir, stack, stackConfig); err != nil {
+			if err := p.generateStackSkill(fs, skillsDir, stack, stackConfig, invocationSettings); err != nil {
 				return fmt.Errorf("failed to generate %s skill: %w", stack, err)
 			}
 		}
@@ -104,7 +109,12 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 		}
 	}
 
-	// 3. Generate agents as sub-agents
+	// 3. Generate reusable base skills for all providers.
+	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings); err != nil {
+		return fmt.Errorf("failed to generate base skills: %w", err)
+	}
+
+	// 4. Generate agents as sub-agents
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create agents directory: %w", err)
 	}
@@ -112,12 +122,17 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 		return fmt.Errorf("failed to generate sub-agents: %w", err)
 	}
 
-	// 4. Generate workflows as slash commands
+	// 5. Generate workflows as slash commands
 	if err := os.MkdirAll(commandsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create commands directory: %w", err)
 	}
 	if err := p.generateWorkflowCommands(fs, commandsDir); err != nil {
 		return fmt.Errorf("failed to generate workflow commands: %w", err)
+	}
+
+	// 6. Generate direct commands from system/commands.
+	if err := p.generateSystemCommands(fs, commandsDir); err != nil {
+		return fmt.Errorf("failed to generate system commands: %w", err)
 	}
 
 	return nil
@@ -220,7 +235,7 @@ func (p *ClaudeCodeProvider) generateStackRules(fs content.FileSystem, rulesDir,
 	subPattern := fmt.Sprintf("system/rules/%s/**/*.md", config.SourcePath)
 	subFiles, err := fs.Glob(subPattern)
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	if len(files) == 0 {
@@ -275,7 +290,7 @@ func (p *ClaudeCodeProvider) generateStackSkill(fs content.FileSystem, skillsDir
 	Globs            []string
 	Description      string
 	ShortDescription string
-}) error {
+}, invocationSettings SkillInvocationSettings) error {
 	// Create skill directory
 	skillDir := filepath.Join(skillsDir, fmt.Sprintf("%s-guidelines", config.Name))
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -293,7 +308,7 @@ func (p *ClaudeCodeProvider) generateStackSkill(fs content.FileSystem, skillsDir
 	subPattern := fmt.Sprintf("system/rules/%s/**/*.md", config.SourcePath)
 	subFiles, err := fs.Glob(subPattern)
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	if len(files) == 0 {
@@ -316,24 +331,65 @@ func (p *ClaudeCodeProvider) generateStackSkill(fs content.FileSystem, skillsDir
 		allContent.WriteString("\n")
 	}
 
-	// Build SKILL.md content with frontmatter
-	var skillContent strings.Builder
-
-	skillContent.WriteString("---\n")
-	skillContent.WriteString(fmt.Sprintf("name: %s-guidelines\n", config.Name))
-	skillContent.WriteString(fmt.Sprintf("description: %s\n", config.Description))
-	skillContent.WriteString("---\n\n")
-
-	skillContent.WriteString(fmt.Sprintf("# %s Guidelines\n\n", templates.NormalizeWorkflowName(stackName)))
-	skillContent.WriteString(allContent.String())
+	skillMarkdown, err := buildSkillMarkdown(SkillDocOptions{
+		Name:                   fmt.Sprintf("%s-guidelines", config.Name),
+		Description:            config.Description,
+		Heading:                fmt.Sprintf("%s Guidelines", templates.NormalizeWorkflowName(stackName)),
+		Body:                   allContent.String(),
+		DisableModelInvocation: invocationSettings.DisableModelInvocation,
+		UserInvocable:          invocationSettings.UserInvocable,
+	})
+	if err != nil {
+		return err
+	}
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(outputPath, []byte(skillContent.String()), 0644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(skillMarkdown), 0644); err != nil {
 		return err
 	}
 
 	fmt.Printf("  Created: %s\n", outputPath)
+	return nil
+}
+
+func (p *ClaudeCodeProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+	files, err := listBaseSkillTemplates(fs)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		skillName, skillMarkdown, err := buildBaseSkillFromTemplate(fs, file, invocationSettings, true)
+		if err != nil {
+			return err
+		}
+
+		skillDir := filepath.Join(skillsDir, skillName)
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			return err
+		}
+
+		outputPath := filepath.Join(skillDir, "SKILL.md")
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("base skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.WriteFile(outputPath, []byte(skillMarkdown), 0644); err != nil {
+			return err
+		}
+
+		fmt.Printf("  Created: %s\n", outputPath)
+	}
+
 	return nil
 }
 
@@ -353,7 +409,7 @@ func (p *ClaudeCodeProvider) generateSubAgents(fs content.FileSystem, agentsDir 
 	// Also check subdirectories (e.g., system/agents/backend/*.md)
 	subFiles, err := fs.Glob("system/agents/**/*.md")
 	if err == nil {
-		files = append(files, subFiles...)
+		files = mergeUniquePaths(files, subFiles)
 	}
 
 	for _, file := range files {
@@ -379,8 +435,7 @@ func (p *ClaudeCodeProvider) createSubAgent(fs content.FileSystem, sourcePath, a
 
 	// Generate agent name from filename if not in frontmatter
 	if agentName == "" {
-		baseName := filepath.Base(sourcePath)
-		agentName = strings.TrimSuffix(baseName, ".md")
+		agentName = agentNameFromSourcePath(sourcePath)
 	}
 
 	// Normalize the name (replace underscores with hyphens)
@@ -555,5 +610,32 @@ func (p *ClaudeCodeProvider) createWorkflowOrchestratorCommand(commandsDir, work
 	}
 
 	fmt.Printf("  Created: %s\n", outputPath)
+	return nil
+}
+
+func (p *ClaudeCodeProvider) generateSystemCommands(fs content.FileSystem, commandsDir string) error {
+	commands, err := listSystemCommandTemplates(fs)
+	if err != nil {
+		return err
+	}
+	if len(commands) == 0 {
+		return nil
+	}
+
+	for _, command := range commands {
+		outputPath := filepath.Join(commandsDir, command.Name+".md")
+		if _, err := os.Stat(outputPath); err == nil {
+			return fmt.Errorf("system command '%s' conflicts with an existing command at %s", command.Name, outputPath)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+
+		if err := os.WriteFile(outputPath, []byte(command.Body), 0644); err != nil {
+			return err
+		}
+
+		fmt.Printf("  Created: %s\n", outputPath)
+	}
+
 	return nil
 }

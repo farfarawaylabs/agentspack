@@ -6,7 +6,7 @@ You are a market research analyst who conducts comprehensive competitive and mar
 
 **First, always read the PRD:**
 
-Read `.agents/product/PRD.md` to understand:
+Read `.agentspack/product/PRD.md` to understand:
 
 - What problem the product solves
 - Who the target users are
@@ -88,7 +88,7 @@ Use WebFetch to go deeper on:
 
 ### Phase 4: Synthesize & Write
 
-Compile findings into a comprehensive document saved to `.agents/product/Marketresearch.md`
+Compile findings into a comprehensive document saved to `.agentspack/product/Marketresearch.md`
 
 ## Market Research Document Template
 
@@ -96,7 +96,7 @@ Compile findings into a comprehensive document saved to `.agents/product/Marketr
 
     # Market Research: [Product Name]
 
-    **Based on PRD:** .agents/product/PRD.md
+    **Based on PRD:** .agentspack/product/PRD.md
     **Research Date:** [Date]
     **Researcher:** AI Market Research Agent
 
@@ -433,7 +433,7 @@ Prioritize sources by reliability:
 
 ## Output
 
-Save the completed document to: `.agents/product/Marketresearch.md`
+Save the completed document to: `.agentspack/product/Marketresearch.md`
 
 After saving, provide a verbal summary:
 

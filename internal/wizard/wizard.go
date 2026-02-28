@@ -10,12 +10,23 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// ClaudeCodeMode represents how tech stack rules should be generated for Claude Code
-type ClaudeCodeMode string
+// GuidelinesMode controls how tech stack guidelines are generated for providers
+// that support both rules and skills formats.
+type GuidelinesMode string
 
 const (
-	ClaudeCodeModeRules  ClaudeCodeMode = "rules"
-	ClaudeCodeModeSkills ClaudeCodeMode = "skills"
+	GuidelinesModeRules  GuidelinesMode = "rules"
+	GuidelinesModeSkills GuidelinesMode = "skills"
+)
+
+// SkillInvocationProfile controls whether generated skills are auto-invokable,
+// user-invokable, or both.
+type SkillInvocationProfile string
+
+const (
+	SkillInvocationDual       SkillInvocationProfile = "dual"
+	SkillInvocationManualOnly SkillInvocationProfile = "manual-only"
+	SkillInvocationAutoOnly   SkillInvocationProfile = "auto-only"
 )
 
 // SyncMode represents how changes should be applied to target repos
@@ -28,11 +39,12 @@ const (
 
 // Config holds the user's selections from the wizard
 type Config struct {
-	Providers      []string
-	TechStacks     []string
-	GenerateBase   bool           // Whether to generate the base file (CLAUDE.md, AGENTS.md, etc.)
-	OutputDir      string
-	ClaudeCodeMode ClaudeCodeMode // Only used when claude-code is selected
+	Providers         []string
+	TechStacks        []string
+	GenerateBase      bool // Whether to generate the base file (CLAUDE.md, AGENTS.md, etc.)
+	OutputDir         string
+	GuidelinesMode    GuidelinesMode         // Used when cursor or claude-code is selected
+	InvocationProfile SkillInvocationProfile // Used when generating skills
 
 	// GitHub sync options
 	SyncToGitHub bool     // Whether to sync generated files to GitHub repos
@@ -53,9 +65,15 @@ var (
 		huh.NewOption("React", "react"),
 	}
 
-	ClaudeCodeModeOptions = []huh.Option[string]{
-		huh.NewOption("Rule files (always loaded, path-scoped)", string(ClaudeCodeModeRules)),
-		huh.NewOption("Skills (loaded on-demand by Claude)", string(ClaudeCodeModeSkills)),
+	GuidelinesModeOptions = []huh.Option[string]{
+		huh.NewOption("Rule files (always loaded, path-scoped)", string(GuidelinesModeRules)),
+		huh.NewOption("Skills (loaded on-demand when relevant)", string(GuidelinesModeSkills)),
+	}
+
+	InvocationProfileOptions = []huh.Option[string]{
+		huh.NewOption("Dual: model auto-use + user command invocation", string(SkillInvocationDual)),
+		huh.NewOption("Manual only: user command invocation only", string(SkillInvocationManualOnly)),
+		huh.NewOption("Auto only: model auto-use only", string(SkillInvocationAutoOnly)),
 	}
 
 	SyncModeOptions = []huh.Option[string]{
@@ -63,16 +81,18 @@ var (
 		huh.NewOption("Merge directly to branch", string(SyncModeMerge)),
 	}
 
-	DefaultOutputDir   = "./dist/agentspack"
+	DefaultOutputDir    = "./dist/agentspack"
 	DefaultTargetBranch = "main"
-	SyncReposFile      = "sync_repos.md"
+	SyncReposFile       = "sync_repos.md"
 )
 
 // Run executes the interactive wizard and returns the user's configuration
 func Run() (*Config, error) {
 	config := &Config{
-		OutputDir:    DefaultOutputDir,
-		GenerateBase: true, // default to yes
+		OutputDir:         DefaultOutputDir,
+		GenerateBase:      true, // default to yes
+		GuidelinesMode:    GuidelinesModeRules,
+		InvocationProfile: SkillInvocationDual,
 	}
 
 	// Step 1: Select providers
@@ -97,16 +117,16 @@ func Run() (*Config, error) {
 		return nil, fmt.Errorf("wizard error: %w", err)
 	}
 
-	// Step 2: If Claude Code was selected, ask about rules vs skills
-	if containsProvider(config.Providers, "claude-code") {
-		var modeStr string = string(ClaudeCodeModeRules) // default
+	// Step 2: If Cursor or Claude Code was selected, ask about rules vs skills
+	if containsProvider(config.Providers, "claude-code") || containsProvider(config.Providers, "cursor") {
+		var modeStr string = string(GuidelinesModeRules) // default
 
 		claudeForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Claude Code: How should tech stack guidelines be generated?").
-					Description("Rules are always loaded; Skills are loaded on-demand when relevant").
-					Options(ClaudeCodeModeOptions...).
+					Title("How should tech stack guidelines be generated?").
+					Description("Applies to selected providers that support both formats (Cursor and Claude Code)").
+					Options(GuidelinesModeOptions...).
 					Value(&modeStr),
 			),
 		)
@@ -116,10 +136,31 @@ func Run() (*Config, error) {
 			return nil, fmt.Errorf("wizard error: %w", err)
 		}
 
-		config.ClaudeCodeMode = ClaudeCodeMode(modeStr)
+		config.GuidelinesMode = GuidelinesMode(modeStr)
 	}
 
-	// Step 3: Select tech stacks, base file, and output directory
+	// Step 3: If skills are generated, ask invocation profile.
+	if shouldAskInvocationProfile(config) {
+		var profileStr string = string(SkillInvocationDual) // default
+
+		invocationForm := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("How should generated skills be invocable?").
+					Description("Controls auto-invocation by the model and command invocation by users").
+					Options(InvocationProfileOptions...).
+					Value(&profileStr),
+			),
+		)
+
+		err = invocationForm.Run()
+		if err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+		config.InvocationProfile = SkillInvocationProfile(profileStr)
+	}
+
+	// Step 4: Select tech stacks, base file, and output directory
 	remainingForm := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
@@ -163,7 +204,7 @@ func Run() (*Config, error) {
 	// Expand and clean the output path
 	config.OutputDir = expandPath(config.OutputDir)
 
-	// Step 4: GitHub sync options (only if sync_repos.md exists)
+	// Step 5: GitHub sync options (only if sync_repos.md exists)
 	if syncReposFileExists() {
 		syncForm := huh.NewForm(
 			huh.NewGroup(
@@ -243,6 +284,14 @@ func containsProvider(providers []string, target string) bool {
 	return false
 }
 
+func shouldAskInvocationProfile(config *Config) bool {
+	if containsProvider(config.Providers, "codex") {
+		return true
+	}
+	hasCursorOrClaude := containsProvider(config.Providers, "cursor") || containsProvider(config.Providers, "claude-code")
+	return hasCursorOrClaude && config.GuidelinesMode == GuidelinesModeSkills
+}
+
 // syncReposFileExists checks if sync_repos.md exists in the current directory
 func syncReposFileExists() bool {
 	info, err := os.Stat(SyncReposFile)
@@ -258,8 +307,11 @@ func PrintSummary(config *Config) {
 	fmt.Printf("Tech Stacks: %v\n", formatList(config.TechStacks))
 	fmt.Printf("Base file:   %v\n", boolToYesNo(config.GenerateBase))
 	fmt.Printf("Output:      %s\n", config.OutputDir)
-	if containsProvider(config.Providers, "claude-code") {
-		fmt.Printf("Claude Code: %s mode\n", config.ClaudeCodeMode)
+	if containsProvider(config.Providers, "claude-code") || containsProvider(config.Providers, "cursor") {
+		fmt.Printf("Guidelines: %s mode\n", config.GuidelinesMode)
+	}
+	if shouldAskInvocationProfile(config) {
+		fmt.Printf("Skills:     %s invocation\n", config.InvocationProfile)
 	}
 	if config.SyncToGitHub {
 		syncModeDesc := "PR"

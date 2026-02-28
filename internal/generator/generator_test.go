@@ -21,7 +21,7 @@ func TestGeneratorWithEmbeddedFS(t *testing.T) {
 		TechStacks:     []string{"react", "backend"},
 		GenerateBase:   true,
 		OutputDir:      tmpDir,
-		ClaudeCodeMode: wizard.ClaudeCodeModeRules,
+		GuidelinesMode: wizard.GuidelinesModeRules,
 	}
 
 	// Test with non-existent local system dir (should use embedded)
@@ -36,7 +36,7 @@ func TestGeneratorWithEmbeddedFS(t *testing.T) {
 		"AGENTS.md",
 		".claude/rules/global.md",
 		".cursor/rules/global/RULE.md",
-		".codex/skills/react-guidelines/SKILL.md",
+		".agents/skills/react-guidelines/SKILL.md",
 	}
 
 	for _, file := range expectedFiles {
@@ -59,7 +59,7 @@ func TestGeneratorWithLocalFS(t *testing.T) {
 		TechStacks:     []string{"react"},
 		GenerateBase:   true,
 		OutputDir:      tmpDir,
-		ClaudeCodeMode: wizard.ClaudeCodeModeSkills,
+		GuidelinesMode: wizard.GuidelinesModeSkills,
 	}
 
 	// Get current working directory

@@ -8,7 +8,7 @@ When delegating:
 
 1. First read all context files yourself
 2. Provide the subagent with:
-   - File paths to read: `.agents/product/PRD.md`, `.agents/product/UXResearch.md`, `.agents/product/ProductPhases.md`
+   - File paths to read: `.agentspack/product/PRD.md`, `.agentspack/product/UXResearch.md`, `.agentspack/product/ProductPhases.md`
    - Summary of key UX patterns and flows
    - User-selected style preferences (after you've asked)
    - Specific components or screens to design
@@ -23,8 +23,8 @@ If no subagent is available, produce the designs yourself.
 
 Generate visual assets and save them to:
 
-- **Wireframes:** `.agents/product/ui/wireframes/[screen-name]-wireframe.png`
-- **High-res mockups:** `.agents/product/ui/highres/[screen-name].png`
+- **Wireframes:** `.agentspack/product/ui/wireframes/[screen-name]-wireframe.png`
+- **High-res mockups:** `.agentspack/product/ui/highres/[screen-name].png`
 
 Generate images for:
 
@@ -46,25 +46,25 @@ Generate images for:
 
 **Read all product documentation:**
 
-1. **`.agents/product/PRD.md`** (Required)
+1. **`.agentspack/product/PRD.md`** (Required)
 
    - Product purpose and positioning
    - Target users
    - Feature requirements
 
-2. **`.agents/product/UXResearch.md`** (Required)
+2. **`.agentspack/product/UXResearch.md`** (Required)
 
    - Navigation patterns
    - User flows
    - Interaction patterns
    - Component recommendations
 
-3. **`.agents/product/ProductPhases.md`** (Required)
+3. **`.agentspack/product/ProductPhases.md`** (Required)
 
    - MVP features (design these in detail)
    - Phase 2+ features (design at lower fidelity)
 
-4. **`.agents/product/Marketresearch.md`** (If available)
+4. **`.agentspack/product/Marketresearch.md`** (If available)
    - Competitor visual styles
    - Market positioning
 
@@ -180,7 +180,7 @@ Generate wireframes first, then high-res mockups for each key screen.
 
 ### Phase 6: Compile Documentation
 
-Save everything to `.agents/product/UIDesign.md`
+Save everything to `.agentspack/product/UIDesign.md`
 
 ## UI Design Document Template
 
@@ -738,9 +738,9 @@ Save everything to `.agents/product/UIDesign.md`
         │  [Tab Bar]                      │
         └─────────────────────────────────┘
 
-    **Wireframe:** `.agents/product/ui/wireframes/[screen-name]-wireframe.png`
+    **Wireframe:** `.agentspack/product/ui/wireframes/[screen-name]-wireframe.png`
 
-    **High-res:** `.agents/product/ui/highres/[screen-name].png`
+    **High-res:** `.agentspack/product/ui/highres/[screen-name].png`
 
     #### Components Used
 
@@ -901,10 +901,10 @@ Save everything to `.agents/product/UIDesign.md`
 
     | Asset | Location | Status |
     |-------|----------|--------|
-    | Wireframe: [Screen 1] | `.agents/product/ui/wireframes/` | [Done/Pending] |
-    | Wireframe: [Screen 2] | `.agents/product/ui/wireframes/` | [Done/Pending] |
-    | High-res: [Screen 1] | `.agents/product/ui/highres/` | [Done/Pending] |
-    | High-res: [Screen 2] | `.agents/product/ui/highres/` | [Done/Pending] |
+    | Wireframe: [Screen 1] | `.agentspack/product/ui/wireframes/` | [Done/Pending] |
+    | Wireframe: [Screen 2] | `.agentspack/product/ui/wireframes/` | [Done/Pending] |
+    | High-res: [Screen 1] | `.agentspack/product/ui/highres/` | [Done/Pending] |
+    | High-res: [Screen 2] | `.agentspack/product/ui/highres/` | [Done/Pending] |
 
     ### Required Exports
 
@@ -1040,12 +1040,12 @@ Before completing:
 
 ## Output
 
-**Primary output:** `.agents/product/UIDesign.md`
+**Primary output:** `.agentspack/product/UIDesign.md`
 
 **Image outputs (if generation available):**
 
-- `.agents/product/ui/wireframes/[screen]-wireframe.png`
-- `.agents/product/ui/highres/[screen].png`
+- `.agentspack/product/ui/wireframes/[screen]-wireframe.png`
+- `.agentspack/product/ui/highres/[screen].png`
 
 After completing, summarize:
 

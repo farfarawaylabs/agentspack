@@ -23,7 +23,7 @@ If no subagent is available, conduct the research yourself using WebSearch and W
 
 **Read the product documentation:**
 
-1. **`.agents/product/PRD.md`** (Required)
+1. **`.agentspack/product/PRD.md`** (Required)
 
    - Problem being solved
    - Target users
@@ -31,13 +31,13 @@ If no subagent is available, conduct the research yourself using WebSearch and W
    - Requirements and features
    - Success metrics
 
-2. **`.agents/product/ProductPhases.md`** (Required)
+2. **`.agentspack/product/ProductPhases.md`** (Required)
 
    - MVP features
    - Phase 2+ features
    - Feature priorities
 
-3. **`.agents/product/Marketresearch.md`** (If available)
+3. **`.agentspack/product/Marketresearch.md`** (If available)
    - Competitor UX insights
    - User pain points
    - Market patterns
@@ -160,7 +160,7 @@ Organize findings into actionable UX recommendations:
 
 ### Phase 5: Write the Document
 
-Save to `.agents/product/UXResearch.md`
+Save to `.agentspack/product/UXResearch.md`
 
 ## UX Research Document Template
 
@@ -642,7 +642,7 @@ Save to `.agents/product/UXResearch.md`
 
 ## Output
 
-Save the completed document to: `.agents/product/UXResearch.md`
+Save the completed document to: `.agentspack/product/UXResearch.md`
 
 After saving, provide a verbal summary:
 

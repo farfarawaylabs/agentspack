@@ -2,10 +2,15 @@
 
 A command-line tool that generates **provider-specific AI agent context files** for your projects. Stop manually maintaining separate configuration files for Cursor, Claude Code, and Codex — let agentspack generate them all from a unified template library.
 
-## What's New
+## Version 2 changes
 
-- **Automatic Postman collection generation** — Agents now create and maintain a Postman collection (under a `postman/` folder) whenever they finish coding or updating an API. Every endpoint includes full documentation, request parameters, body schemas, and realistic examples.
-- **API Guide documentation** — Agents automatically keep a `docs/API_GUIDE.md` file up to date with clear instructions on how to use every endpoint, including all parameters, request/response formats, and example usage.
+If you are using agentspack for the first time, jump straight to the next section. If you have been using agentspack already, these are the important updates:
+
+1. **Codex folder convention update** — Since Codex now uses `.agents`, agentspack now uses `.agentspack` for its own project docs/config folder (instead of `.agents`) to avoid collision with Codex runtime files.
+2. **New learning skills system** — Agents are now instructed to capture reusable learnings (for example debugging patterns, error diagnosis flows, or project-specific conventions) as reusable skills so this knowledge persists across future sessions and platforms.
+3. **New `remember` command** — A shared command is now generated across providers to persist user memories into both `AGENTS.md` and `CLAUDE.md`, creating a `Things to remember` section when needed.
+4. **Automatic Postman collection generation** — Agents now create and maintain a Postman collection (under a `postman/` folder) whenever they finish coding or updating an API. Every endpoint includes full documentation, request parameters, body schemas, and realistic examples.
+5. **API Guide documentation** — Agents automatically keep a `docs/API_GUIDE.md` file up to date with clear instructions on how to use every endpoint, including all parameters, request/response formats, and example usage.
 
 ## What is agentspack?
 
@@ -50,27 +55,32 @@ The wizard will guide you through:
 
 1. **Select providers** — Choose which AI coding tools you want to generate files for:
 
-   - Cursor
-   - Claude Code
-   - Codex
+- Cursor
+- Claude Code
+- Codex
 
-2. **Claude Code mode** (if selected) — Choose how tech stack rules should be generated:
+2. **Guidelines mode** (if Cursor or Claude Code is selected) — Choose how tech stack guidelines should be generated:
 
-   - **Rules** — Always loaded, path-scoped rule files
-   - **Skills** — Loaded on-demand when relevant
+- **Rules** — Always loaded, path-scoped rule files
+- **Skills** — Loaded on-demand when relevant
 
-3. **Select tech stacks** — Choose which technology templates to include:
+3. **Skill invocation profile** (if skills are generated) — Choose how skills can be invoked:
 
-   - Backend
-   - React
+- **Dual** — Model can auto-invoke, and users can run as commands
+- **Manual only** — Commands only (no model auto-invocation)
+- **Auto only** — Model auto-invocation only (provider support varies)
 
-4. **Base file** — Optionally generate a base instructions file (`CLAUDE.md`, `AGENTS.md`, etc.)
+4. **Select tech stacks** — Choose which technology templates to include:
 
-5. **Output directory** — Specify where to write the generated files (default: `./dist/agentspack`)
+- Backend
+- React
 
-6. **GitHub sync** (if `sync_repos.md` exists) — Optionally sync generated files to multiple GitHub repositories:
-   - Create Pull Requests for review, or
-   - Merge directly to a target branch
+5. **Base file** — Optionally generate a base instructions file (`CLAUDE.md`, `AGENTS.md`, etc.)
+6. **Output directory** — Specify where to write the generated files (default: `./dist/agentspack`)
+7. **GitHub sync** (if `sync_repos.md` exists) — Optionally sync generated files to multiple GitHub repositories:
+
+- Create Pull Requests for review, or
+- Merge directly to a target branch
 
 ### Example Session
 
@@ -81,8 +91,11 @@ Welcome to agentspack!
   ✓ Cursor
   ✓ Claude Code
 
-? Claude Code: How should tech stack guidelines be generated?
-  > Rule files (always loaded, path-scoped)
+? How should tech stack guidelines be generated?
+  > Skills (loaded on-demand when relevant)
+
+? How should generated skills be invocable?
+  > Dual: model auto-use + user command invocation
 
 ? Select tech stacks
   ✓ Backend
@@ -105,7 +118,8 @@ Providers:   cursor, claude-code
 Tech Stacks: backend, react
 Base file:   yes
 Output:      ./dist/agentspack
-Claude Code: rules mode
+Guidelines: skills mode
+Skills:     dual invocation
 GitHub Sync: Yes (PR to main)
 
 Using embedded templates
@@ -153,7 +167,7 @@ agents/
 │   ├── build.sh             # Build script
 │   ├── go.mod
 │   └── main.go
-└── .agents/                 # Project documentation
+└── .agentspack/             # Project documentation
     └── PRD.md               # Product Requirements Document
 ```
 
@@ -218,23 +232,30 @@ After running agentspack, your output directory will contain:
 
 ```
 dist/agentspack/
-├── cursor/
-│   └── [provider-specific files]
-├── claude-code/
-│   └── [provider-specific files]
-└── codex/
-    └── [provider-specific files]
+├── AGENTS.md
+├── CLAUDE.md
+├── .agents/
+│   └── skills/
+├── .claude/
+│   ├── rules/
+│   ├── skills/
+│   ├── agents/
+│   └── commands/
+└── .cursor/
+    ├── rules/
+    ├── skills/
+    └── commands/
 ```
 
-Each provider folder contains the generated context files in the format expected by that tool.
+Generated files are written directly in the selected output root using each provider's expected directory conventions.
 
 ## Supported Providers
 
-| Provider    | Status      | Output Format                      |
-| ----------- | ----------- | ---------------------------------- |
-| Cursor      | Implemented | `.cursorrules` and rules directory |
-| Claude Code | Implemented | `CLAUDE.md` and rules/skills       |
-| Codex       | Implemented | `AGENTS.md` and guidance files     |
+| Provider    | Status      | Output Format                                  |
+| ----------- | ----------- | ---------------------------------------------- |
+| Cursor      | Implemented | `.cursor/rules`, `.cursor/skills`, commands    |
+| Claude Code | Implemented | `CLAUDE.md`, `.claude/rules`, `.claude/skills` |
+| Codex       | Implemented | `AGENTS.md` and `.agents/skills`               |
 
 ## Development
 
@@ -258,9 +279,10 @@ agentspack can automatically distribute generated files to multiple GitHub repos
 
 1. Install the [GitHub CLI](https://cli.github.com/) (`gh`)
 2. Authenticate with GitHub:
-   ```bash
-   gh auth login
-   ```
+
+```bash
+ gh auth login
+```
 
 ### Setup
 
@@ -286,8 +308,10 @@ When `sync_repos.md` exists, the wizard will automatically ask additional questi
 
 1. **Sync to GitHub?** — Whether to sync the generated files to the listed repositories
 2. **PR or merge?** — Choose how changes are applied:
-   - **Create Pull Request** — Creates a PR for review (recommended for teams)
-   - **Merge directly** — Pushes changes directly to the target branch
+
+- **Create Pull Request** — Creates a PR for review (recommended for teams)
+- **Merge directly** — Pushes changes directly to the target branch
+
 3. **Target branch** — Which branch to create PRs against or merge into (default: `main`)
 
 ### Example Sync Output

@@ -1,8 +1,8 @@
 First make sure you read the following documents to fully understand the project, the scope, the research, goals and proposed UI:
 
-- .agents/product/PRD.md
-- .agents/product/ProductPhases.md
-- .agents/product/UIDesign.md
+- .agentspack/product/PRD.md
+- .agentspack/product/ProductPhases.md
+- .agentspack/product/UIDesign.md
 
 Then your goal is to write a detailed todo list that we can give to the development team to start and build the product.
 
@@ -22,9 +22,9 @@ Then your goal is to write a detailed todo list that we can give to the developm
 - After every backend phase, make sure to have todos for writing tests for the backend API.
 
 ** Output **
-Your output should be a ./agents/TODOS.md file in a format that allows to easily mark items that were done later.
+Your output should be a ./.agentspack/TODOS.md file in a format that allows to easily mark items that were done later.
 
-- The ./agents/TODOS.md must:
+- The ./.agentspack/TODOS.md must:
   - Use checkboxes for tasks.
   - Include a stable Task ID/number for every task (e.g., T-001 or 1.2.3) and display it alongside the checkbox.
   - For every task, include: Lane (FE/BE/Design), Parallelizable (Yes/No), Depends on (task IDs) / Prerequisites, Blockers, Deliverable.

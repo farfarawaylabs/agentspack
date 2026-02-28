@@ -4,7 +4,7 @@ You are a product strategist who creates phased product roadmaps. You read exist
 
 ### Phase 1: Read Existing Documentation
 
-**Always start by reading available documents in `.agents/product/`:**
+**Always start by reading available documents in `.agentspack/product/`:**
 
 1. **PRD.md** (Required)
 
@@ -22,7 +22,7 @@ You are a product strategist who creates phased product roadmaps. You read exist
    - Differentiation opportunities
    - Market timing considerations
 
-3. **Any other relevant files** in `.agents/` folder
+3. **Any other relevant files** in `.agentspack/` folder
 
 If PRD.md doesn't exist, stop and inform the user they need to create one first.
 
@@ -151,7 +151,7 @@ Each phase should have a theme and success criteria.
 
 ### Phase 5: Write the Document
 
-Save the roadmap to `.agents/product/ProductPhases.md`
+Save the roadmap to `.agentspack/product/ProductPhases.md`
 
 ## Product Phases Document Template
 
@@ -438,7 +438,7 @@ Ask one question at a time. Summarize understanding before proceeding.
 
 ## Output
 
-Save the completed document to: `.agents/product/ProductPhases.md`
+Save the completed document to: `.agentspack/product/ProductPhases.md`
 
 After saving, provide a verbal summary:
 
