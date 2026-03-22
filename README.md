@@ -11,6 +11,7 @@ If you are using agentspack for the first time, jump straight to the next sectio
 3. **New `remember` command** — A shared command is now generated across providers to persist user memories into both `AGENTS.md` and `CLAUDE.md`, creating a `Things to remember` section when needed.
 4. **Automatic Postman collection generation** — Agents now create and maintain a Postman collection (under a `postman/` folder) whenever they finish coding or updating an API. Every endpoint includes full documentation, request parameters, body schemas, and realistic examples.
 5. **API Guide documentation** — Agents automatically keep a `docs/API_GUIDE.md` file up to date with clear instructions on how to use every endpoint, including all parameters, request/response formats, and example usage.
+6. **New `agentspack add` mode** — You can now run agentspack from an existing project root and selectively install newly added base skills, workflows, or system commands without regenerating everything.
 
 ## What is agentspack?
 
@@ -51,6 +52,12 @@ Simply run the interactive wizard:
 agentspack
 ```
 
+If you already installed agentspack files in a repo and later want to add only newly introduced shared skills or commands, run this from the root of that target repo:
+
+```bash
+agentspack add
+```
+
 The wizard will guide you through:
 
 1. **Select providers** — Choose which AI coding tools you want to generate files for:
@@ -81,6 +88,34 @@ The wizard will guide you through:
 
 - Create Pull Requests for review, or
 - Merge directly to a target branch
+
+### Selective Install Mode
+
+`agentspack add` is meant for repos that already have provider files generated and just need some newly added shared content.
+
+Run it from the root of the repo you want to update:
+
+```bash
+cd /path/to/your/project
+agentspack add
+```
+
+The add wizard will:
+
+1. Ask which providers are already used in that repo
+2. Ask which categories to add:
+   - Base skills
+   - Workflows
+   - System commands
+3. Show the available items in those categories and let you select exactly which ones to install
+4. Skip files that already exist instead of failing
+
+Notes:
+
+- `agentspack add` installs into the current working directory, so run it from the target repo root.
+- Cursor and Claude Code install workflows/system commands into `.cursor/commands` and `.claude/commands`.
+- Codex installs selected base skills, workflows, and system commands as skills under `.agents/skills`.
+- Existing files are preserved by default, which makes this mode safe for topping up repos with newly added shared templates.
 
 ### Example Session
 
@@ -138,6 +173,53 @@ Syncing to 2 GitHub repositories...
 Sync complete! 2 PRs created.
 ```
 
+### Example Selective Install Session
+
+```
+Welcome to agentspack add!
+
+? Select providers already used in this repo
+  ✓ Cursor
+  ✓ Claude Code
+
+? What would you like to add?
+  ✓ Base skills (5 available)
+  ✓ System commands (2 available)
+
+? Select base skills to install
+  ✓ refresh-repo-docs - Refresh repository documentation so it matches the current codebase...
+
+? Select system commands to install
+  ✓ remember - Command: remember
+
+? How should generated skills be invocable?
+  > Dual: model auto-use + user command invocation
+
+=== Configuration Summary ===
+
+Mode:        add selective content
+Providers:   cursor, claude-code
+Repo Root:   /path/to/your/project
+Base Skills: refresh-repo-docs
+Workflows:   (none)
+Commands:    remember
+Skills:      dual invocation
+Conflicts:   skip-existing
+
+Using embedded templates
+Installing selected items into: /path/to/your/project
+
+Installing selected items for cursor...
+  Created: /path/to/your/project/.cursor/skills/refresh-repo-docs/SKILL.md
+  Skipped existing: /path/to/your/project/.cursor/commands/remember.md
+
+Installing selected items for claude-code...
+  Created: /path/to/your/project/.claude/skills/refresh-repo-docs/SKILL.md
+  Skipped existing: /path/to/your/project/.claude/commands/remember.md
+
+Selective install complete!
+```
+
 ## Project Structure
 
 ```
@@ -146,6 +228,7 @@ agents/
 │   ├── cmd/                 # CLI command definitions (Cobra)
 │   ├── internal/
 │   │   ├── content/         # Embedded filesystem handling
+│   │   ├── catalog/         # Template discovery for selective install
 │   │   ├── generator/       # Core generation logic
 │   │   ├── providers/       # Provider-specific adapters
 │   │   │   ├── cursor.go    # Cursor output format
@@ -159,6 +242,8 @@ agents/
 │   ├── system/              # Source markdown templates
 │   │   ├── agents/          # Agent definitions (UI designer, UX researcher, etc.)
 │   │   ├── base/            # Base configuration files per provider
+│   │   ├── base-skills/     # Shared cross-platform skills
+│   │   ├── commands/        # Shared command templates
 │   │   ├── rules/           # Tech-stack specific rules
 │   │   │   ├── backend/     # Backend development rules
 │   │   │   ├── frontend/    # Frontend development rules
@@ -248,6 +333,8 @@ dist/agentspack/
 ```
 
 Generated files are written directly in the selected output root using each provider's expected directory conventions.
+
+When using `agentspack add`, files are written directly into the current repo root instead of a separate output directory.
 
 ## Supported Providers
 
