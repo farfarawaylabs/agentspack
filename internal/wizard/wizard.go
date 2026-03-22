@@ -7,7 +7,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/agentspack/agentspack/internal/catalog"
+	"github.com/agentspack/agentspack/internal/content"
 	"github.com/charmbracelet/huh"
+)
+
+type GenerationMode string
+
+const (
+	GenerationModeFull GenerationMode = "full"
+	GenerationModeAdd  GenerationMode = "add"
 )
 
 // GuidelinesMode controls how tech stack guidelines are generated for providers
@@ -29,6 +38,21 @@ const (
 	SkillInvocationAutoOnly   SkillInvocationProfile = "auto-only"
 )
 
+type ConflictPolicy string
+
+const (
+	ConflictPolicyError        ConflictPolicy = "error"
+	ConflictPolicySkipExisting ConflictPolicy = "skip-existing"
+)
+
+type SelectiveInstallCategory string
+
+const (
+	SelectiveCategoryBaseSkills     SelectiveInstallCategory = "base-skills"
+	SelectiveCategoryWorkflows      SelectiveInstallCategory = "workflows"
+	SelectiveCategorySystemCommands SelectiveInstallCategory = "system-commands"
+)
+
 // SyncMode represents how changes should be applied to target repos
 type SyncMode string
 
@@ -39,12 +63,18 @@ const (
 
 // Config holds the user's selections from the wizard
 type Config struct {
+	Mode              GenerationMode
 	Providers         []string
 	TechStacks        []string
 	GenerateBase      bool // Whether to generate the base file (CLAUDE.md, AGENTS.md, etc.)
 	OutputDir         string
 	GuidelinesMode    GuidelinesMode         // Used when cursor or claude-code is selected
 	InvocationProfile SkillInvocationProfile // Used when generating skills
+	ConflictPolicy    ConflictPolicy
+
+	SelectedBaseSkills     []string
+	SelectedWorkflows      []string
+	SelectedSystemCommands []string
 
 	// GitHub sync options
 	SyncToGitHub bool     // Whether to sync generated files to GitHub repos
@@ -76,6 +106,12 @@ var (
 		huh.NewOption("Auto only: model auto-use only", string(SkillInvocationAutoOnly)),
 	}
 
+	SelectiveInstallCategoryOptions = []huh.Option[string]{
+		huh.NewOption("Base skills", string(SelectiveCategoryBaseSkills)),
+		huh.NewOption("Workflows", string(SelectiveCategoryWorkflows)),
+		huh.NewOption("System commands", string(SelectiveCategorySystemCommands)),
+	}
+
 	SyncModeOptions = []huh.Option[string]{
 		huh.NewOption("Create Pull Request (for review)", string(SyncModePR)),
 		huh.NewOption("Merge directly to branch", string(SyncModeMerge)),
@@ -89,10 +125,12 @@ var (
 // Run executes the interactive wizard and returns the user's configuration
 func Run() (*Config, error) {
 	config := &Config{
+		Mode:              GenerationModeFull,
 		OutputDir:         DefaultOutputDir,
 		GenerateBase:      true, // default to yes
 		GuidelinesMode:    GuidelinesModeRules,
 		InvocationProfile: SkillInvocationDual,
+		ConflictPolicy:    ConflictPolicyError,
 	}
 
 	// Step 1: Select providers
@@ -252,6 +290,144 @@ func Run() (*Config, error) {
 	return config, nil
 }
 
+func RunAdd(fs content.FileSystem) (*Config, error) {
+	baseSkills, err := catalog.ListBaseSkills(fs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover base skills: %w", err)
+	}
+	workflows, err := catalog.ListWorkflows(fs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover workflows: %w", err)
+	}
+	systemCommands, err := catalog.ListSystemCommands(fs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover system commands: %w", err)
+	}
+
+	availableCategories := buildSelectiveCategoryOptions(baseSkills, workflows, systemCommands)
+	if len(availableCategories) == 0 {
+		return nil, errors.New("no base skills, workflows, or system commands are available to install")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve current working directory: %w", err)
+	}
+
+	config := &Config{
+		Mode:              GenerationModeAdd,
+		OutputDir:         cwd,
+		InvocationProfile: SkillInvocationDual,
+		ConflictPolicy:    ConflictPolicySkipExisting,
+	}
+
+	providersForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select providers already used in this repo").
+				Description("Only the selected providers will receive the new items").
+				Options(AvailableProviders...).
+				Value(&config.Providers).
+				Validate(func(selected []string) error {
+					if len(selected) == 0 {
+						return errors.New("please select at least one provider")
+					}
+					return nil
+				}),
+		),
+	)
+	if err := providersForm.Run(); err != nil {
+		return nil, fmt.Errorf("wizard error: %w", err)
+	}
+
+	selectedCategories := []string{}
+	categoryForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("What would you like to add?").
+				Description("Choose one or more categories to install into the current repo").
+				Options(availableCategories...).
+				Value(&selectedCategories).
+				Validate(func(selected []string) error {
+					if len(selected) == 0 {
+						return errors.New("please select at least one category")
+					}
+					return nil
+				}),
+		),
+	)
+	if err := categoryForm.Run(); err != nil {
+		return nil, fmt.Errorf("wizard error: %w", err)
+	}
+
+	if containsCategory(selectedCategories, SelectiveCategoryBaseSkills) {
+		options := buildBaseSkillOptions(baseSkills)
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Select base skills to install").
+					Options(options...).
+					Value(&config.SelectedBaseSkills).
+					Validate(requireSelection("please select at least one base skill")),
+			),
+		)
+		if err := form.Run(); err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+	}
+
+	if containsCategory(selectedCategories, SelectiveCategoryWorkflows) {
+		options := buildWorkflowOptions(workflows)
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Select workflows to install").
+					Options(options...).
+					Value(&config.SelectedWorkflows).
+					Validate(requireSelection("please select at least one workflow")),
+			),
+		)
+		if err := form.Run(); err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+	}
+
+	if containsCategory(selectedCategories, SelectiveCategorySystemCommands) {
+		options := buildSystemCommandOptions(systemCommands)
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Select system commands to install").
+					Options(options...).
+					Value(&config.SelectedSystemCommands).
+					Validate(requireSelection("please select at least one system command")),
+			),
+		)
+		if err := form.Run(); err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+	}
+
+	if shouldAskSelectiveInvocationProfile(config) {
+		var profileStr string = string(SkillInvocationDual)
+		invocationForm := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("How should generated skills be invocable?").
+					Description("Applies when the selected providers/categories generate skills").
+					Options(InvocationProfileOptions...).
+					Value(&profileStr),
+			),
+		)
+		if err := invocationForm.Run(); err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+		config.InvocationProfile = SkillInvocationProfile(profileStr)
+	}
+
+	return config, nil
+}
+
 // expandPath expands ~ to home directory and handles absolute paths
 func expandPath(path string) string {
 	// First clean the path
@@ -285,11 +461,22 @@ func containsProvider(providers []string, target string) bool {
 }
 
 func shouldAskInvocationProfile(config *Config) bool {
+	if config.Mode == GenerationModeAdd {
+		return shouldAskSelectiveInvocationProfile(config)
+	}
 	if containsProvider(config.Providers, "codex") {
 		return true
 	}
 	hasCursorOrClaude := containsProvider(config.Providers, "cursor") || containsProvider(config.Providers, "claude-code")
 	return hasCursorOrClaude && config.GuidelinesMode == GuidelinesModeSkills
+}
+
+func shouldAskSelectiveInvocationProfile(config *Config) bool {
+	if containsProvider(config.Providers, "codex") && (len(config.SelectedBaseSkills) > 0 || len(config.SelectedWorkflows) > 0 || len(config.SelectedSystemCommands) > 0) {
+		return true
+	}
+	hasCursorOrClaude := containsProvider(config.Providers, "cursor") || containsProvider(config.Providers, "claude-code")
+	return hasCursorOrClaude && len(config.SelectedBaseSkills) > 0
 }
 
 // syncReposFileExists checks if sync_repos.md exists in the current directory
@@ -303,6 +490,20 @@ func PrintSummary(config *Config) {
 	fmt.Println()
 	fmt.Println("=== Configuration Summary ===")
 	fmt.Println()
+	if config.Mode == GenerationModeAdd {
+		fmt.Printf("Mode:        add selective content\n")
+		fmt.Printf("Providers:   %v\n", formatList(config.Providers))
+		fmt.Printf("Repo Root:   %s\n", config.OutputDir)
+		fmt.Printf("Base Skills: %v\n", formatList(config.SelectedBaseSkills))
+		fmt.Printf("Workflows:   %v\n", formatList(config.SelectedWorkflows))
+		fmt.Printf("Commands:    %v\n", formatList(config.SelectedSystemCommands))
+		if shouldAskSelectiveInvocationProfile(config) {
+			fmt.Printf("Skills:      %s invocation\n", config.InvocationProfile)
+		}
+		fmt.Printf("Conflicts:   %s\n", config.ConflictPolicy)
+		fmt.Println()
+		return
+	}
 	fmt.Printf("Providers:   %v\n", formatList(config.Providers))
 	fmt.Printf("Tech Stacks: %v\n", formatList(config.TechStacks))
 	fmt.Printf("Base file:   %v\n", boolToYesNo(config.GenerateBase))
@@ -342,4 +543,72 @@ func formatList(items []string) string {
 		result += item
 	}
 	return result
+}
+
+func containsCategory(categories []string, target SelectiveInstallCategory) bool {
+	for _, category := range categories {
+		if category == string(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func requireSelection(message string) func([]string) error {
+	return func(selected []string) error {
+		if len(selected) == 0 {
+			return errors.New(message)
+		}
+		return nil
+	}
+}
+
+func buildSelectiveCategoryOptions(baseSkills []catalog.BaseSkill, workflows []catalog.Workflow, systemCommands []catalog.SystemCommand) []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(SelectiveInstallCategoryOptions))
+	if len(baseSkills) > 0 {
+		options = append(options, huh.NewOption(fmt.Sprintf("Base skills (%d available)", len(baseSkills)), string(SelectiveCategoryBaseSkills)))
+	}
+	if len(workflows) > 0 {
+		options = append(options, huh.NewOption(fmt.Sprintf("Workflows (%d available)", len(workflows)), string(SelectiveCategoryWorkflows)))
+	}
+	if len(systemCommands) > 0 {
+		options = append(options, huh.NewOption(fmt.Sprintf("System commands (%d available)", len(systemCommands)), string(SelectiveCategorySystemCommands)))
+	}
+	return options
+}
+
+func buildBaseSkillOptions(skills []catalog.BaseSkill) []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(skills))
+	for _, skill := range skills {
+		label := skill.Name
+		if skill.Description != "" {
+			label = fmt.Sprintf("%s - %s", skill.Name, skill.Description)
+		}
+		options = append(options, huh.NewOption(label, skill.Name))
+	}
+	return options
+}
+
+func buildWorkflowOptions(workflows []catalog.Workflow) []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(workflows))
+	for _, workflow := range workflows {
+		label := workflow.Name
+		if workflow.Description != "" {
+			label = fmt.Sprintf("%s - %s", workflow.Name, workflow.Description)
+		}
+		options = append(options, huh.NewOption(label, workflow.Name))
+	}
+	return options
+}
+
+func buildSystemCommandOptions(commands []catalog.SystemCommand) []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(commands))
+	for _, command := range commands {
+		label := command.Name
+		if command.Description != "" {
+			label = fmt.Sprintf("%s - %s", command.Name, command.Description)
+		}
+		options = append(options, huh.NewOption(label, command.Name))
+	}
+	return options
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/agentspack/agentspack/internal/content"
 	"github.com/agentspack/agentspack/internal/generator"
 	_ "github.com/agentspack/agentspack/internal/providers" // Register providers
 	"github.com/agentspack/agentspack/internal/syncer"
@@ -21,6 +22,20 @@ library of markdown templates.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		runWizard()
 	},
+}
+
+var addCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Install selected base skills and commands",
+	Long: `Install selected base skills, workflows, and system commands into the
+current repository root without regenerating the entire provider output.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		runAddWizard()
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(addCmd)
 }
 
 func Execute() {
@@ -42,6 +57,48 @@ func runWizard() {
 
 	wizard.PrintSummary(config)
 
+	systemDir := resolveSystemDir()
+
+	// Run the generator
+	gen := generator.New(config, systemDir)
+	if err := gen.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Run the syncer if GitHub sync was requested
+	if config.SyncToGitHub {
+		sync := syncer.New(config, config.OutputDir)
+		if err := sync.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Sync error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func runAddWizard() {
+	fmt.Println("Welcome to agentspack add!")
+	fmt.Println()
+
+	systemDir := resolveSystemDir()
+	fs, _ := content.GetFileSystem(systemDir)
+
+	config, err := wizard.RunAdd(fs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	wizard.PrintSummary(config)
+
+	gen := generator.New(config, systemDir)
+	if err := gen.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func resolveSystemDir() string {
 	// Determine system directory (relative to binary location for now)
 	// In MVP, we assume the system folder is next to the binary
 	execPath, err := os.Executable()
@@ -76,20 +133,5 @@ func runWizard() {
 	if !isValidSystemDir(systemDir) {
 		systemDir = ""
 	}
-
-	// Run the generator
-	gen := generator.New(config, systemDir)
-	if err := gen.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Run the syncer if GitHub sync was requested
-	if config.SyncToGitHub {
-		sync := syncer.New(config, config.OutputDir)
-		if err := sync.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Sync error: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	return systemDir
 }
