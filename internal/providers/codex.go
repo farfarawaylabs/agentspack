@@ -47,6 +47,10 @@ var codexStackConfigs = map[string]struct {
 }
 
 func (p *CodexProvider) Generate(config *wizard.Config, fs content.FileSystem, outputDir string) error {
+	if config.Mode == wizard.GenerationModeAdd {
+		return p.generateSelectedContent(config, fs, outputDir)
+	}
+
 	// Create the .agents/skills directory structure (Codex scans .agents/skills)
 	skillsDir := filepath.Join(outputDir, ".agents", "skills")
 
@@ -77,7 +81,7 @@ func (p *CodexProvider) Generate(config *wizard.Config, fs content.FileSystem, o
 	}
 
 	// 3. Generate reusable base skills for all providers.
-	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings); err != nil {
+	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings, nil, wizard.ConflictPolicyError); err != nil {
 		return fmt.Errorf("failed to generate base skills: %w", err)
 	}
 
@@ -87,13 +91,45 @@ func (p *CodexProvider) Generate(config *wizard.Config, fs content.FileSystem, o
 	}
 
 	// 5. Generate workflow skills
-	if err := p.generateWorkflowSkills(fs, skillsDir, invocationSettings); err != nil {
+	if err := p.generateWorkflowSkills(fs, skillsDir, invocationSettings, nil, wizard.ConflictPolicyError); err != nil {
 		return fmt.Errorf("failed to generate workflow skills: %w", err)
 	}
 
 	// 6. Generate direct command skills from system/commands.
-	if err := p.generateSystemCommandSkills(fs, skillsDir, invocationSettings); err != nil {
+	if err := p.generateSystemCommandSkills(fs, skillsDir, invocationSettings, nil, wizard.ConflictPolicyError); err != nil {
 		return fmt.Errorf("failed to generate system command skills: %w", err)
+	}
+
+	return nil
+}
+
+func (p *CodexProvider) generateSelectedContent(config *wizard.Config, fs content.FileSystem, outputDir string) error {
+	skillsDir := filepath.Join(outputDir, ".agents", "skills")
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create codex skills directory: %w", err)
+	}
+
+	invocationSettings, invocationWarning := resolveInvocationSettings(config.InvocationProfile, p.Name())
+	if invocationWarning != "" {
+		fmt.Println(invocationWarning)
+	}
+
+	if len(config.SelectedBaseSkills) > 0 {
+		if err := p.generateBaseSkills(fs, skillsDir, invocationSettings, selectedSet(config.SelectedBaseSkills), config.ConflictPolicy); err != nil {
+			return fmt.Errorf("failed to generate selected base skills: %w", err)
+		}
+	}
+
+	if len(config.SelectedWorkflows) > 0 {
+		if err := p.generateWorkflowSkills(fs, skillsDir, invocationSettings, selectedSet(config.SelectedWorkflows), config.ConflictPolicy); err != nil {
+			return fmt.Errorf("failed to generate selected workflow skills: %w", err)
+		}
+	}
+
+	if len(config.SelectedSystemCommands) > 0 {
+		if err := p.generateSystemCommandSkills(fs, skillsDir, invocationSettings, selectedSet(config.SelectedSystemCommands), config.ConflictPolicy); err != nil {
+			return fmt.Errorf("failed to generate selected system command skills: %w", err)
+		}
 	}
 
 	return nil
@@ -224,15 +260,19 @@ func (p *CodexProvider) generateStackSkill(fs content.FileSystem, skillsDir, sta
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), config.SkillName); err != nil {
+	if _, err := writeSkillFile(
+		outputPath,
+		[]byte(skillMarkdown),
+		config.SkillName,
+		fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", config.SkillName, outputPath),
+		wizard.ConflictPolicyError,
+	); err != nil {
 		return err
 	}
-
-	fmt.Printf("  Created: %s\n", outputPath)
 	return nil
 }
 
-func (p *CodexProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+func (p *CodexProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings, selectedNames map[string]struct{}, conflictPolicy wizard.ConflictPolicy) error {
 	files, err := listBaseSkillTemplates(fs)
 	if err != nil {
 		return err
@@ -246,6 +286,9 @@ func (p *CodexProvider) generateBaseSkills(fs content.FileSystem, skillsDir stri
 		if err != nil {
 			return err
 		}
+		if !isSelected(selectedNames, skillName) {
+			continue
+		}
 
 		skillDir := filepath.Join(skillsDir, skillName)
 		if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -253,11 +296,15 @@ func (p *CodexProvider) generateBaseSkills(fs content.FileSystem, skillsDir stri
 		}
 
 		outputPath := filepath.Join(skillDir, "SKILL.md")
-		if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
+		if _, err := writeSkillFile(
+			outputPath,
+			[]byte(skillMarkdown),
+			skillName,
+			fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath),
+			conflictPolicy,
+		); err != nil {
 			return err
 		}
-
-		fmt.Printf("  Created: %s\n", outputPath)
 	}
 
 	return nil
@@ -340,16 +387,20 @@ func (p *CodexProvider) createAgentSkill(fs content.FileSystem, sourcePath, skil
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
+	if _, err := writeSkillFile(
+		outputPath,
+		[]byte(skillMarkdown),
+		skillName,
+		fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath),
+		wizard.ConflictPolicyError,
+	); err != nil {
 		return err
 	}
-
-	fmt.Printf("  Created: %s\n", outputPath)
 	return nil
 }
 
 // generateWorkflowSkills creates skills for workflows
-func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings, selectedWorkflows map[string]struct{}, conflictPolicy wizard.ConflictPolicy) error {
 	// Check if workflows directory exists
 	if _, err := fs.Stat("system/workflows"); err != nil {
 		return nil
@@ -367,8 +418,11 @@ func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir 
 		}
 
 		workflowName := entry.Name()
+		if !isSelected(selectedWorkflows, workflowName) {
+			continue
+		}
 
-		if err := p.generateSingleWorkflowSkill(fs, skillsDir, workflowName, invocationSettings); err != nil {
+		if err := p.generateSingleWorkflowSkill(fs, skillsDir, workflowName, invocationSettings, conflictPolicy); err != nil {
 			return fmt.Errorf("failed to generate workflow skill '%s': %w", workflowName, err)
 		}
 	}
@@ -377,7 +431,7 @@ func (p *CodexProvider) generateWorkflowSkills(fs content.FileSystem, skillsDir 
 }
 
 // generateSingleWorkflowSkill creates step skills and an orchestrator skill for one workflow
-func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skillsDir, workflowName string, invocationSettings SkillInvocationSettings) error {
+func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skillsDir, workflowName string, invocationSettings SkillInvocationSettings, conflictPolicy wizard.ConflictPolicy) error {
 	// Find all markdown files in the workflow directory
 	pattern := fmt.Sprintf("system/workflows/%s/*.md", workflowName)
 	files, err := fs.Glob(pattern)
@@ -435,7 +489,7 @@ func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skill
 		})
 
 		// Create the step skill
-		if err := p.createWorkflowStepSkill(fs, file, skillsDir, skillName, workflowName, invocationSettings); err != nil {
+		if err := p.createWorkflowStepSkill(fs, file, skillsDir, skillName, workflowName, invocationSettings, conflictPolicy); err != nil {
 			return err
 		}
 	}
@@ -446,11 +500,11 @@ func (p *CodexProvider) generateSingleWorkflowSkill(fs content.FileSystem, skill
 	})
 
 	// Create the workflow orchestrator skill
-	return p.createWorkflowOrchestratorSkill(skillsDir, workflowName, steps, invocationSettings)
+	return p.createWorkflowOrchestratorSkill(skillsDir, workflowName, steps, invocationSettings, conflictPolicy)
 }
 
 // createWorkflowStepSkill creates a Codex skill for a single workflow step
-func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePath, skillsDir, skillName, workflowName string, invocationSettings SkillInvocationSettings) error {
+func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePath, skillsDir, skillName, workflowName string, invocationSettings SkillInvocationSettings, conflictPolicy wizard.ConflictPolicy) error {
 	fileContent, err := fs.ReadFile(sourcePath)
 	if err != nil {
 		return err
@@ -484,16 +538,20 @@ func (p *CodexProvider) createWorkflowStepSkill(fs content.FileSystem, sourcePat
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
+	if _, err := writeSkillFile(
+		outputPath,
+		[]byte(skillMarkdown),
+		skillName,
+		fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath),
+		conflictPolicy,
+	); err != nil {
 		return err
 	}
-
-	fmt.Printf("  Created: %s\n", outputPath)
 	return nil
 }
 
 // createWorkflowOrchestratorSkill creates the main workflow skill that references all steps
-func (p *CodexProvider) createWorkflowOrchestratorSkill(skillsDir, workflowName string, steps []templates.WorkflowStep, invocationSettings SkillInvocationSettings) error {
+func (p *CodexProvider) createWorkflowOrchestratorSkill(skillsDir, workflowName string, steps []templates.WorkflowStep, invocationSettings SkillInvocationSettings, conflictPolicy wizard.ConflictPolicy) error {
 	skillName := fmt.Sprintf("workflow-%s", workflowName)
 
 	// Create skill directory
@@ -531,11 +589,15 @@ func (p *CodexProvider) createWorkflowOrchestratorSkill(skillsDir, workflowName 
 
 	// Write SKILL.md
 	outputPath := filepath.Join(skillDir, "SKILL.md")
-	if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), skillName); err != nil {
+	if _, err := writeSkillFile(
+		outputPath,
+		[]byte(skillMarkdown),
+		skillName,
+		fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath),
+		conflictPolicy,
+	); err != nil {
 		return err
 	}
-
-	fmt.Printf("  Created: %s\n", outputPath)
 	return nil
 }
 
@@ -555,7 +617,7 @@ func generateWorkflowDescription(workflowName string, stepCount int) string {
 	return fmt.Sprintf("Run the complete %s workflow with %d sequential steps. Use when you need to execute this structured process from start to finish.", displayName, stepCount)
 }
 
-func (p *CodexProvider) generateSystemCommandSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+func (p *CodexProvider) generateSystemCommandSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings, selectedCommands map[string]struct{}, conflictPolicy wizard.ConflictPolicy) error {
 	commands, err := listSystemCommandTemplates(fs)
 	if err != nil {
 		return err
@@ -565,6 +627,9 @@ func (p *CodexProvider) generateSystemCommandSkills(fs content.FileSystem, skill
 	}
 
 	for _, command := range commands {
+		if !isSelected(selectedCommands, command.Name) {
+			continue
+		}
 		skillDir := filepath.Join(skillsDir, command.Name)
 		if err := os.MkdirAll(skillDir, 0755); err != nil {
 			return err
@@ -584,22 +649,21 @@ func (p *CodexProvider) generateSystemCommandSkills(fs content.FileSystem, skill
 		}
 
 		outputPath := filepath.Join(skillDir, "SKILL.md")
-		if err := writeSkillFileIfAbsent(outputPath, []byte(skillMarkdown), command.Name); err != nil {
+		if _, err := writeSkillFile(
+			outputPath,
+			[]byte(skillMarkdown),
+			command.Name,
+			fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", command.Name, outputPath),
+			conflictPolicy,
+		); err != nil {
 			return err
 		}
-
-		fmt.Printf("  Created: %s\n", outputPath)
 	}
 
 	return nil
 }
 
-func writeSkillFileIfAbsent(outputPath string, content []byte, skillName string) error {
-	if _, err := os.Stat(outputPath); err == nil {
-		return fmt.Errorf("skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	return os.WriteFile(outputPath, content, 0644)
+func writeSkillFile(outputPath string, content []byte, skillName, conflictMessage string, conflictPolicy wizard.ConflictPolicy) (bool, error) {
+	_ = skillName
+	return writeFileWithConflictPolicy(outputPath, content, conflictMessage, conflictPolicy)
 }

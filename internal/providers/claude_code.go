@@ -50,6 +50,10 @@ var claudeCodeStackConfigs = map[string]struct {
 }
 
 func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSystem, outputDir string) error {
+	if config.Mode == wizard.GenerationModeAdd {
+		return p.generateSelectedContent(config, fs, outputDir)
+	}
+
 	// Create the .claude directory structure
 	claudeDir := filepath.Join(outputDir, ".claude")
 	rulesDir := filepath.Join(claudeDir, "rules")
@@ -110,7 +114,7 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 	}
 
 	// 3. Generate reusable base skills for all providers.
-	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings); err != nil {
+	if err := p.generateBaseSkills(fs, skillsDir, invocationSettings, nil, wizard.ConflictPolicyError); err != nil {
 		return fmt.Errorf("failed to generate base skills: %w", err)
 	}
 
@@ -126,13 +130,49 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 	if err := os.MkdirAll(commandsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create commands directory: %w", err)
 	}
-	if err := p.generateWorkflowCommands(fs, commandsDir); err != nil {
+	if err := p.generateWorkflowCommands(fs, commandsDir, nil, wizard.ConflictPolicyError); err != nil {
 		return fmt.Errorf("failed to generate workflow commands: %w", err)
 	}
 
 	// 6. Generate direct commands from system/commands.
-	if err := p.generateSystemCommands(fs, commandsDir); err != nil {
+	if err := p.generateSystemCommands(fs, commandsDir, nil, wizard.ConflictPolicyError); err != nil {
 		return fmt.Errorf("failed to generate system commands: %w", err)
+	}
+
+	return nil
+}
+
+func (p *ClaudeCodeProvider) generateSelectedContent(config *wizard.Config, fs content.FileSystem, outputDir string) error {
+	skillsDir := filepath.Join(outputDir, ".claude", "skills")
+	commandsDir := filepath.Join(outputDir, ".claude", "commands")
+
+	invocationSettings, invocationWarning := resolveInvocationSettings(config.InvocationProfile, p.Name())
+	if invocationWarning != "" {
+		fmt.Println(invocationWarning)
+	}
+
+	if len(config.SelectedBaseSkills) > 0 {
+		if err := p.generateBaseSkills(fs, skillsDir, invocationSettings, selectedSet(config.SelectedBaseSkills), config.ConflictPolicy); err != nil {
+			return fmt.Errorf("failed to generate selected base skills: %w", err)
+		}
+	}
+
+	if len(config.SelectedWorkflows) > 0 {
+		if err := os.MkdirAll(commandsDir, 0755); err != nil {
+			return fmt.Errorf("failed to create commands directory: %w", err)
+		}
+		if err := p.generateWorkflowCommands(fs, commandsDir, selectedSet(config.SelectedWorkflows), config.ConflictPolicy); err != nil {
+			return fmt.Errorf("failed to generate selected workflow commands: %w", err)
+		}
+	}
+
+	if len(config.SelectedSystemCommands) > 0 {
+		if err := os.MkdirAll(commandsDir, 0755); err != nil {
+			return fmt.Errorf("failed to create commands directory: %w", err)
+		}
+		if err := p.generateSystemCommands(fs, commandsDir, selectedSet(config.SelectedSystemCommands), config.ConflictPolicy); err != nil {
+			return fmt.Errorf("failed to generate selected system commands: %w", err)
+		}
 	}
 
 	return nil
@@ -353,7 +393,7 @@ func (p *ClaudeCodeProvider) generateStackSkill(fs content.FileSystem, skillsDir
 	return nil
 }
 
-func (p *ClaudeCodeProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings) error {
+func (p *ClaudeCodeProvider) generateBaseSkills(fs content.FileSystem, skillsDir string, invocationSettings SkillInvocationSettings, selectedNames map[string]struct{}, conflictPolicy wizard.ConflictPolicy) error {
 	files, err := listBaseSkillTemplates(fs)
 	if err != nil {
 		return err
@@ -371,6 +411,9 @@ func (p *ClaudeCodeProvider) generateBaseSkills(fs content.FileSystem, skillsDir
 		if err != nil {
 			return err
 		}
+		if !isSelected(selectedNames, skillName) {
+			continue
+		}
 
 		skillDir := filepath.Join(skillsDir, skillName)
 		if err := os.MkdirAll(skillDir, 0755); err != nil {
@@ -378,16 +421,14 @@ func (p *ClaudeCodeProvider) generateBaseSkills(fs content.FileSystem, skillsDir
 		}
 
 		outputPath := filepath.Join(skillDir, "SKILL.md")
-		if _, err := os.Stat(outputPath); err == nil {
-			return fmt.Errorf("base skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath)
-		} else if !os.IsNotExist(err) {
+		if _, err := writeFileWithConflictPolicy(
+			outputPath,
+			[]byte(skillMarkdown),
+			fmt.Sprintf("base skill '%s' conflicts with an existing generated skill at %s", skillName, outputPath),
+			conflictPolicy,
+		); err != nil {
 			return err
 		}
-		if err := os.WriteFile(outputPath, []byte(skillMarkdown), 0644); err != nil {
-			return err
-		}
-
-		fmt.Printf("  Created: %s\n", outputPath)
 	}
 
 	return nil
@@ -466,7 +507,7 @@ func (p *ClaudeCodeProvider) createSubAgent(fs content.FileSystem, sourcePath, a
 }
 
 // generateWorkflowCommands creates slash commands for workflows
-func (p *ClaudeCodeProvider) generateWorkflowCommands(fs content.FileSystem, commandsDir string) error {
+func (p *ClaudeCodeProvider) generateWorkflowCommands(fs content.FileSystem, commandsDir string, selectedWorkflows map[string]struct{}, conflictPolicy wizard.ConflictPolicy) error {
 	// Check if workflows directory exists
 	if _, err := fs.Stat("system/workflows"); err != nil {
 		return nil
@@ -484,8 +525,11 @@ func (p *ClaudeCodeProvider) generateWorkflowCommands(fs content.FileSystem, com
 		}
 
 		workflowName := entry.Name()
+		if !isSelected(selectedWorkflows, workflowName) {
+			continue
+		}
 
-		if err := p.generateSingleWorkflowCommand(fs, commandsDir, workflowName); err != nil {
+		if err := p.generateSingleWorkflowCommand(fs, commandsDir, workflowName, conflictPolicy); err != nil {
 			return fmt.Errorf("failed to generate workflow command '%s': %w", workflowName, err)
 		}
 	}
@@ -494,7 +538,7 @@ func (p *ClaudeCodeProvider) generateWorkflowCommands(fs content.FileSystem, com
 }
 
 // generateSingleWorkflowCommand creates step commands and an orchestrator command for one workflow
-func (p *ClaudeCodeProvider) generateSingleWorkflowCommand(fs content.FileSystem, commandsDir, workflowName string) error {
+func (p *ClaudeCodeProvider) generateSingleWorkflowCommand(fs content.FileSystem, commandsDir, workflowName string, conflictPolicy wizard.ConflictPolicy) error {
 	// Find all markdown files in the workflow directory
 	pattern := fmt.Sprintf("system/workflows/%s/*.md", workflowName)
 	files, err := fs.Glob(pattern)
@@ -552,7 +596,7 @@ func (p *ClaudeCodeProvider) generateSingleWorkflowCommand(fs content.FileSystem
 		})
 
 		// Create the step command
-		if err := p.createWorkflowStepCommand(fs, file, commandsDir, commandName, workflowName); err != nil {
+		if err := p.createWorkflowStepCommand(fs, file, commandsDir, commandName, workflowName, conflictPolicy); err != nil {
 			return err
 		}
 	}
@@ -563,11 +607,11 @@ func (p *ClaudeCodeProvider) generateSingleWorkflowCommand(fs content.FileSystem
 	})
 
 	// Create the workflow orchestrator command
-	return p.createWorkflowOrchestratorCommand(commandsDir, workflowName, steps)
+	return p.createWorkflowOrchestratorCommand(commandsDir, workflowName, steps, conflictPolicy)
 }
 
 // createWorkflowStepCommand creates a slash command for a single workflow step
-func (p *ClaudeCodeProvider) createWorkflowStepCommand(fs content.FileSystem, sourcePath, commandsDir, commandName, workflowName string) error {
+func (p *ClaudeCodeProvider) createWorkflowStepCommand(fs content.FileSystem, sourcePath, commandsDir, commandName, workflowName string, conflictPolicy wizard.ConflictPolicy) error {
 	fileContent, err := fs.ReadFile(sourcePath)
 	if err != nil {
 		return err
@@ -581,16 +625,19 @@ func (p *ClaudeCodeProvider) createWorkflowStepCommand(fs content.FileSystem, so
 
 	// Write the command file
 	outputPath := filepath.Join(commandsDir, fmt.Sprintf("%s.md", commandName))
-	if err := os.WriteFile(outputPath, []byte(commandContent.String()), 0644); err != nil {
+	if _, err := writeFileWithConflictPolicy(
+		outputPath,
+		[]byte(commandContent.String()),
+		fmt.Sprintf("workflow command '%s' conflicts with an existing command at %s", commandName, outputPath),
+		conflictPolicy,
+	); err != nil {
 		return err
 	}
-
-	fmt.Printf("  Created: %s\n", outputPath)
 	return nil
 }
 
 // createWorkflowOrchestratorCommand creates the main workflow command that guides through all steps
-func (p *ClaudeCodeProvider) createWorkflowOrchestratorCommand(commandsDir, workflowName string, steps []templates.WorkflowStep) error {
+func (p *ClaudeCodeProvider) createWorkflowOrchestratorCommand(commandsDir, workflowName string, steps []templates.WorkflowStep, conflictPolicy wizard.ConflictPolicy) error {
 	// Build the orchestrator data
 	data := templates.WorkflowOrchestratorData{
 		WorkflowName: workflowName,
@@ -605,15 +652,18 @@ func (p *ClaudeCodeProvider) createWorkflowOrchestratorCommand(commandsDir, work
 
 	// Write the command file
 	outputPath := filepath.Join(commandsDir, fmt.Sprintf("%s.md", workflowName))
-	if err := os.WriteFile(outputPath, []byte(orchestratorContent), 0644); err != nil {
+	if _, err := writeFileWithConflictPolicy(
+		outputPath,
+		[]byte(orchestratorContent),
+		fmt.Sprintf("workflow command '%s' conflicts with an existing command at %s", workflowName, outputPath),
+		conflictPolicy,
+	); err != nil {
 		return err
 	}
-
-	fmt.Printf("  Created: %s\n", outputPath)
 	return nil
 }
 
-func (p *ClaudeCodeProvider) generateSystemCommands(fs content.FileSystem, commandsDir string) error {
+func (p *ClaudeCodeProvider) generateSystemCommands(fs content.FileSystem, commandsDir string, selectedCommands map[string]struct{}, conflictPolicy wizard.ConflictPolicy) error {
 	commands, err := listSystemCommandTemplates(fs)
 	if err != nil {
 		return err
@@ -623,18 +673,18 @@ func (p *ClaudeCodeProvider) generateSystemCommands(fs content.FileSystem, comma
 	}
 
 	for _, command := range commands {
+		if !isSelected(selectedCommands, command.Name) {
+			continue
+		}
 		outputPath := filepath.Join(commandsDir, command.Name+".md")
-		if _, err := os.Stat(outputPath); err == nil {
-			return fmt.Errorf("system command '%s' conflicts with an existing command at %s", command.Name, outputPath)
-		} else if !os.IsNotExist(err) {
+		if _, err := writeFileWithConflictPolicy(
+			outputPath,
+			[]byte(command.Body),
+			fmt.Sprintf("system command '%s' conflicts with an existing command at %s", command.Name, outputPath),
+			conflictPolicy,
+		); err != nil {
 			return err
 		}
-
-		if err := os.WriteFile(outputPath, []byte(command.Body), 0644); err != nil {
-			return err
-		}
-
-		fmt.Printf("  Created: %s\n", outputPath)
 	}
 
 	return nil

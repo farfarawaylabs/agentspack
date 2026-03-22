@@ -3,6 +3,7 @@ package generator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/agentspack/agentspack/internal/providers"
@@ -85,5 +86,83 @@ func TestGeneratorWithLocalFS(t *testing.T) {
 	claudeMDPath := filepath.Join(tmpDir, "CLAUDE.md")
 	if _, err := os.Stat(claudeMDPath); os.IsNotExist(err) {
 		t.Error("Expected CLAUDE.md does not exist")
+	}
+}
+
+func TestGeneratorSelectiveInstallSkipsExistingAndFiltersSelections(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agentspack-selective-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	existingSkillPath := filepath.Join(tmpDir, ".cursor", "skills", "frontend-design", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingSkillPath), 0755); err != nil {
+		t.Fatalf("Failed to create existing skill directory: %v", err)
+	}
+	existingContent := "existing skill content"
+	if err := os.WriteFile(existingSkillPath, []byte(existingContent), 0644); err != nil {
+		t.Fatalf("Failed to write existing skill: %v", err)
+	}
+
+	config := &wizard.Config{
+		Mode:                   wizard.GenerationModeAdd,
+		Providers:              []string{"cursor", "claude-code", "codex"},
+		OutputDir:              tmpDir,
+		InvocationProfile:      wizard.SkillInvocationDual,
+		ConflictPolicy:         wizard.ConflictPolicySkipExisting,
+		SelectedBaseSkills:     []string{"frontend-design"},
+		SelectedWorkflows:      []string{"planning"},
+		SelectedSystemCommands: []string{"remember"},
+	}
+
+	gen := New(config, "/nonexistent/system")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("Selective install failed: %v", err)
+	}
+
+	content, err := os.ReadFile(existingSkillPath)
+	if err != nil {
+		t.Fatalf("Failed to read existing skill after selective install: %v", err)
+	}
+	if string(content) != existingContent {
+		t.Fatalf("Expected existing skill to be preserved, got %q", string(content))
+	}
+
+	expectedPaths := []string{
+		filepath.Join(tmpDir, ".claude", "skills", "frontend-design", "SKILL.md"),
+		filepath.Join(tmpDir, ".claude", "commands", "planning.md"),
+		filepath.Join(tmpDir, ".claude", "commands", "remember.md"),
+		filepath.Join(tmpDir, ".cursor", "commands", "planning.md"),
+		filepath.Join(tmpDir, ".cursor", "commands", "remember.md"),
+		filepath.Join(tmpDir, ".agents", "skills", "frontend-design", "SKILL.md"),
+		filepath.Join(tmpDir, ".agents", "skills", "workflow-planning", "SKILL.md"),
+		filepath.Join(tmpDir, ".agents", "skills", "remember", "SKILL.md"),
+	}
+	for _, path := range expectedPaths {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("Expected file %s does not exist", path)
+		}
+	}
+
+	unexpectedPaths := []string{
+		filepath.Join(tmpDir, ".cursor", "skills", "cloudflare-platform-development", "SKILL.md"),
+		filepath.Join(tmpDir, ".cursor", "commands", "development.md"),
+		filepath.Join(tmpDir, ".claude", "commands", "development.md"),
+		filepath.Join(tmpDir, ".agents", "skills", "workflow-development", "SKILL.md"),
+		filepath.Join(tmpDir, ".agents", "skills", "create-new-skill", "SKILL.md"),
+	}
+	for _, path := range unexpectedPaths {
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("Did not expect file %s to exist", path)
+		}
+	}
+
+	cursorPlanningContent, err := os.ReadFile(filepath.Join(tmpDir, ".cursor", "commands", "planning.md"))
+	if err != nil {
+		t.Fatalf("Failed to read cursor planning command: %v", err)
+	}
+	if !strings.Contains(string(cursorPlanningContent), "/planning-01-create-prd-interactive") {
+		t.Fatalf("Expected cursor planning orchestrator to reference planning steps")
 	}
 }

@@ -43,7 +43,11 @@ func (g *Generator) Run() error {
 	}
 
 	fmt.Printf("\nUsing %s templates\n", g.fsType)
-	fmt.Printf("Generating files to: %s\n\n", absOutputDir)
+	if g.config.Mode == wizard.GenerationModeAdd {
+		fmt.Printf("Installing selected items into: %s\n\n", absOutputDir)
+	} else {
+		fmt.Printf("Generating files to: %s\n\n", absOutputDir)
+	}
 
 	// Process each selected provider
 	for _, providerName := range g.config.Providers {
@@ -53,13 +57,21 @@ func (g *Generator) Run() error {
 			continue
 		}
 
-		fmt.Printf("Generating for %s...\n", providerName)
+		if g.config.Mode == wizard.GenerationModeAdd {
+			fmt.Printf("Installing selected items for %s...\n", providerName)
+		} else {
+			fmt.Printf("Generating for %s...\n", providerName)
+		}
 		if err := provider.Generate(g.config, g.fs, outputDir); err != nil {
 			return fmt.Errorf("failed to generate for %s: %w", providerName, err)
 		}
 		fmt.Println()
 	}
 
-	fmt.Println("Generation complete!")
+	if g.config.Mode == wizard.GenerationModeAdd {
+		fmt.Println("Selective install complete!")
+	} else {
+		fmt.Println("Generation complete!")
+	}
 	return nil
 }
