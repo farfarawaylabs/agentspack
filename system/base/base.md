@@ -13,13 +13,21 @@ If the .agentspack folder exists:
 - **Decompose complex tasks** into smaller, manageable subtasks when possible
 - Each subtask should be focused and specific (e.g., "Create user model", "Add authentication middleware", "Build login component")
 - Mark the first task as "in_progress" and begin working
+- **Validate the plan before you present it**: Re-read the full draft and check for missed steps, wrong assumptions, ordering or dependency mistakes, and unclear verification or rollback.
+- **Repeat that review** until you are confident the plan is sound—run extra passes when the work is security-sensitive, data-critical, or ambiguous; do not ship a plan you have not stress-tested in your own review.
+
+## Rigor & up-to-date knowledge
+
+- **Do not be lazy**: no shallow plans, API guesses from memory, or hand-wavy recommendations—investigate, read what matters, and think deliberately before you advise or conclude.
+- **Recommendations and design work** (not only bugs): ground advice in this repository—configs, dependencies, and real code paths—and name tradeoffs plus at least one alternative you considered. For bug investigations, follow the **Debugging & QA** section below.
+- **Do not rely on internal (training) knowledge alone** for APIs, SDKs, CLI flags, framework behavior, deprecations, or breaking changes. Actively research current official documentation, release notes, and changelogs, and use web search or MCP tools when available. Cross-check against what the repository actually uses (dependencies, lockfiles, configs).
 
 ## Development Phase
 
 - Always create a new branch before working on a new feature and commit changes when finished working
 - Work on **one subtask at a time** from your plan
 - After completing each coding subtask, **run a code review** focusing on the code that was just changed
-- Never be lazy or take unexplained shortcuts. Think carefully, do complete work, and validate that each change actually solves the subtask.
+- Take no unexplained shortcuts: think carefully, do complete work, and validate that each change actually solves the subtask.
 
 ## Code Review & Iteration Loop
 
