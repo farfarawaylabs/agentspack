@@ -81,6 +81,7 @@ The wizard will guide you through:
 
 - Backend
 - React
+- Cloudflare Agent Stack (knowledge pack for Cloudflare's modern agent primitives — see [Knowledge Packs](#knowledge-packs))
 
 5. **Base file** — Optionally generate a base instructions file (`CLAUDE.md`, `AGENTS.md`, etc.)
 6. **Output directory** — Specify where to write the generated files (default: `./dist/agentspack`)
@@ -107,6 +108,7 @@ The add wizard will:
    - Base skills
    - Workflows
    - System commands
+   - Doc packs
 3. Show the available items in those categories and let you select exactly which ones to install
 4. Skip files that already exist instead of failing
 
@@ -116,6 +118,7 @@ Notes:
 - Cursor and Claude Code install workflows/system commands into `.cursor/commands` and `.claude/commands`.
 - Codex installs selected base skills, workflows, and system commands as skills under `.agents/skills`.
 - Existing files are preserved by default, which makes this mode safe for topping up repos with newly added shared templates.
+- Doc packs copy reference docs under `.agentspack/docs/<pack>/` and upsert the pack's directive into existing `CLAUDE.md` / `AGENTS.md` (and a Cursor always-apply rule). Markers keep the upsert idempotent, so rerunning the install does not duplicate content.
 
 ### Example Session
 
@@ -255,6 +258,35 @@ agents/
 └── .agentspack/             # Project documentation
     └── PRD.md               # Product Requirements Document
 ```
+
+## Knowledge Packs
+
+Knowledge packs are curated reference libraries that teach AI coding agents about platforms, frameworks, or SDKs whose APIs evolve faster than model training cutoffs. They live under `system/doc-packs/<name>/` and are surfaced through the tech-stack selector in the wizard.
+
+Unlike regular tech stacks (Backend, React) — which emit path-scoped coding-style rules or skills — a knowledge pack installs:
+
+1. **A reference docs folder** copied into `<outputDir>/.agentspack/docs/<pack-name>/` (the pack's detailed docs plus a standalone `_directive.md`).
+2. **An eager directive** — a short map/decision-matrix/index that is always in the agent's context:
+   - Appended to `CLAUDE.md` (Claude Code) and `AGENTS.md` (Codex).
+   - Emitted as an `alwaysApply: true` rule at `.cursor/rules/<pack-name>/RULE.md` (Cursor).
+
+The directive's job is to tell the agent *when* to drill into which reference doc — it does not inline all the detail. Agents then fetch the specific topic doc on demand, keeping the context window lean.
+
+### Available packs
+
+| Pack                                                    | Covers                                                                                                                               |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `cloudflare-agent-stack` — **Cloudflare Agent Stack**   | Agents SDK, `this.state` / `this.sql`, callable methods, schedules, queues, retries, fibers (`runFiber`/`stash`), Workflows, Durable Object Facets, Dynamic Workers, AI Search, Browser Run, Sandboxes, Email agents, MCP, security, recipes, anti-patterns. 20 topic files + decision guide + directive. |
+
+### Adding a new knowledge pack
+
+1. Create `system/doc-packs/<pack-name>/_directive.md` — the eager prompt (keep it short: decision matrix + index + core rules).
+2. Create `system/doc-packs/<pack-name>/docs/*.md` — the detailed reference files agents fetch on demand.
+3. Register the pack in `internal/providers/doc_packs.go`'s `docPackRegistry` with its display name.
+4. Add an option for it to `AvailableTechStacks` in `internal/wizard/wizard.go`.
+5. Run `./build.sh` and test with `agentspack`.
+
+The generator automatically routes doc packs through the correct flow for every provider.
 
 ## Template Categories
 

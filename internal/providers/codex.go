@@ -70,6 +70,12 @@ func (p *CodexProvider) Generate(config *wizard.Config, fs content.FileSystem, o
 
 	// 2. Generate tech stack skills
 	for _, stack := range config.TechStacks {
+		if IsDocPack(stack) {
+			if err := p.installDocPack(fs, outputDir, stack); err != nil {
+				return fmt.Errorf("failed to install doc pack '%s': %w", stack, err)
+			}
+			continue
+		}
 		stackConfig, ok := codexStackConfigs[stack]
 		if !ok {
 			fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
@@ -129,6 +135,14 @@ func (p *CodexProvider) generateSelectedContent(config *wizard.Config, fs conten
 	if len(config.SelectedSystemCommands) > 0 {
 		if err := p.generateSystemCommandSkills(fs, skillsDir, invocationSettings, selectedSet(config.SelectedSystemCommands), config.ConflictPolicy); err != nil {
 			return fmt.Errorf("failed to generate selected system command skills: %w", err)
+		}
+	}
+
+	if len(config.SelectedDocPacks) > 0 {
+		for _, packName := range config.SelectedDocPacks {
+			if err := p.installDocPack(fs, outputDir, packName); err != nil {
+				return fmt.Errorf("failed to install doc pack '%s': %w", packName, err)
+			}
 		}
 	}
 
@@ -267,6 +281,24 @@ func (p *CodexProvider) generateStackSkill(fs content.FileSystem, skillsDir, sta
 		fmt.Sprintf("skill '%s' conflicts with an existing generated skill at %s", config.SkillName, outputPath),
 		wizard.ConflictPolicyError,
 	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// installDocPack copies a doc pack's reference files into
+// .agentspack/docs/<pack>/ and appends its directive to AGENTS.md so the
+// guidance is always in-context for Codex.
+func (p *CodexProvider) installDocPack(fs content.FileSystem, outputDir, packName string) error {
+	pack, err := LoadDocPack(fs, packName)
+	if err != nil {
+		return err
+	}
+	if err := CopyDocPackDocs(fs, pack, outputDir); err != nil {
+		return err
+	}
+	baseFilePath := filepath.Join(outputDir, "AGENTS.md")
+	if err := AppendDirectiveToBaseFile(baseFilePath, pack); err != nil {
 		return err
 	}
 	return nil

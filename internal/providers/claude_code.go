@@ -90,6 +90,12 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 			return fmt.Errorf("failed to create skills directory: %w", err)
 		}
 		for _, stack := range config.TechStacks {
+			if IsDocPack(stack) {
+				if err := p.installDocPack(fs, outputDir, stack); err != nil {
+					return fmt.Errorf("failed to install doc pack '%s': %w", stack, err)
+				}
+				continue
+			}
 			stackConfig, ok := claudeCodeStackConfigs[stack]
 			if !ok {
 				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
@@ -102,6 +108,12 @@ func (p *ClaudeCodeProvider) Generate(config *wizard.Config, fs content.FileSyst
 	} else {
 		// Rules mode: generate rule files with path scoping
 		for _, stack := range config.TechStacks {
+			if IsDocPack(stack) {
+				if err := p.installDocPack(fs, outputDir, stack); err != nil {
+					return fmt.Errorf("failed to install doc pack '%s': %w", stack, err)
+				}
+				continue
+			}
 			stackConfig, ok := claudeCodeStackConfigs[stack]
 			if !ok {
 				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
@@ -172,6 +184,14 @@ func (p *ClaudeCodeProvider) generateSelectedContent(config *wizard.Config, fs c
 		}
 		if err := p.generateSystemCommands(fs, commandsDir, selectedSet(config.SelectedSystemCommands), config.ConflictPolicy); err != nil {
 			return fmt.Errorf("failed to generate selected system commands: %w", err)
+		}
+	}
+
+	if len(config.SelectedDocPacks) > 0 {
+		for _, packName := range config.SelectedDocPacks {
+			if err := p.installDocPack(fs, outputDir, packName); err != nil {
+				return fmt.Errorf("failed to install doc pack '%s': %w", packName, err)
+			}
 		}
 	}
 
@@ -390,6 +410,24 @@ func (p *ClaudeCodeProvider) generateStackSkill(fs content.FileSystem, skillsDir
 	}
 
 	fmt.Printf("  Created: %s\n", outputPath)
+	return nil
+}
+
+// installDocPack copies a doc pack's reference files into
+// .agentspack/docs/<pack>/ and appends its directive to CLAUDE.md so the
+// guidance is always in-context for Claude Code.
+func (p *ClaudeCodeProvider) installDocPack(fs content.FileSystem, outputDir, packName string) error {
+	pack, err := LoadDocPack(fs, packName)
+	if err != nil {
+		return err
+	}
+	if err := CopyDocPackDocs(fs, pack, outputDir); err != nil {
+		return err
+	}
+	baseFilePath := filepath.Join(outputDir, "CLAUDE.md")
+	if err := AppendDirectiveToBaseFile(baseFilePath, pack); err != nil {
+		return err
+	}
 	return nil
 }
 

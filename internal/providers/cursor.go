@@ -94,6 +94,12 @@ func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, 
 			return fmt.Errorf("failed to create cursor skills directory: %w", err)
 		}
 		for _, stack := range config.TechStacks {
+			if IsDocPack(stack) {
+				if err := p.installDocPack(fs, outputDir, rulesDir, stack, wizard.ConflictPolicyError); err != nil {
+					return fmt.Errorf("failed to install doc pack '%s': %w", stack, err)
+				}
+				continue
+			}
 			stackConfig, ok := techStackConfigs[stack]
 			if !ok {
 				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
@@ -105,6 +111,12 @@ func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, 
 		}
 	} else {
 		for _, stack := range config.TechStacks {
+			if IsDocPack(stack) {
+				if err := p.installDocPack(fs, outputDir, rulesDir, stack, wizard.ConflictPolicyError); err != nil {
+					return fmt.Errorf("failed to install doc pack '%s': %w", stack, err)
+				}
+				continue
+			}
 			stackConfig, ok := techStackConfigs[stack]
 			if !ok {
 				fmt.Printf("Warning: no configuration for tech stack '%s', skipping\n", stack)
@@ -140,6 +152,7 @@ func (p *CursorProvider) Generate(config *wizard.Config, fs content.FileSystem, 
 }
 
 func (p *CursorProvider) generateSelectedContent(config *wizard.Config, fs content.FileSystem, outputDir string) error {
+	rulesDir := filepath.Join(outputDir, ".cursor", "rules")
 	skillsDir := filepath.Join(outputDir, ".cursor", "skills")
 	commandsDir := filepath.Join(outputDir, ".cursor", "commands")
 
@@ -169,6 +182,17 @@ func (p *CursorProvider) generateSelectedContent(config *wizard.Config, fs conte
 		}
 		if err := p.generateSystemCommands(fs, commandsDir, selectedSet(config.SelectedSystemCommands), config.ConflictPolicy); err != nil {
 			return fmt.Errorf("failed to generate selected system commands: %w", err)
+		}
+	}
+
+	if len(config.SelectedDocPacks) > 0 {
+		if err := os.MkdirAll(rulesDir, 0755); err != nil {
+			return fmt.Errorf("failed to create cursor rules directory: %w", err)
+		}
+		for _, packName := range config.SelectedDocPacks {
+			if err := p.installDocPack(fs, outputDir, rulesDir, packName, config.ConflictPolicy); err != nil {
+				return fmt.Errorf("failed to install doc pack '%s': %w", packName, err)
+			}
 		}
 	}
 
@@ -422,6 +446,57 @@ func (p *CursorProvider) generateBaseSkills(fs content.FileSystem, skillsDir str
 			return err
 		}
 	}
+
+	return nil
+}
+
+// installDocPack copies a doc pack's reference files into .agentspack/docs/<pack>/
+// and emits an always-apply Cursor rule carrying the pack's directive.
+// In add mode callers pass their ConflictPolicy so user-edited rule files
+// are preserved; in full-generate mode callers pass ConflictPolicyError to
+// match the rest of the fresh-output convention.
+func (p *CursorProvider) installDocPack(fs content.FileSystem, outputDir, rulesDir, packName string, policy wizard.ConflictPolicy) error {
+	pack, err := LoadDocPack(fs, packName)
+	if err != nil {
+		return err
+	}
+
+	if err := CopyDocPackDocs(fs, pack, outputDir); err != nil {
+		return err
+	}
+
+	ruleDir := filepath.Join(rulesDir, pack.Name)
+	if err := os.MkdirAll(ruleDir, 0755); err != nil {
+		return fmt.Errorf("failed to create doc pack rule directory %s: %w", ruleDir, err)
+	}
+
+	description := fmt.Sprintf("%s: architectural guidance and reference docs", pack.DisplayName)
+	var ruleContent strings.Builder
+	ruleContent.WriteString("---\n")
+	ruleContent.WriteString(fmt.Sprintf("description: \"%s\"\n", escapeYAMLString(description)))
+	ruleContent.WriteString("alwaysApply: true\n")
+	ruleContent.WriteString("---\n\n")
+	ruleContent.WriteString(pack.Directive)
+	ruleContent.WriteString("\n")
+
+	outputPath := filepath.Join(ruleDir, "RULE.md")
+
+	if policy == wizard.ConflictPolicySkipExisting {
+		if _, err := writeFileWithConflictPolicy(
+			outputPath,
+			[]byte(ruleContent.String()),
+			fmt.Sprintf("doc pack rule '%s' conflicts with an existing rule at %s", pack.Name, outputPath),
+			policy,
+		); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := os.WriteFile(outputPath, []byte(ruleContent.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", outputPath, err)
+	}
+	fmt.Printf("  Created: %s\n", outputPath)
 
 	return nil
 }

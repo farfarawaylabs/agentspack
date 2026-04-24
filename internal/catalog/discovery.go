@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/agentspack/agentspack/internal/content"
+	"github.com/agentspack/agentspack/internal/docpacks"
 	"github.com/agentspack/agentspack/internal/templates"
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +28,37 @@ type Workflow struct {
 	Name        string
 	Description string
 	SourceDir   string
+}
+
+type DocPack struct {
+	Name        string
+	DisplayName string
+	Description string
+}
+
+// ListDocPacks enumerates every registered doc pack (system/doc-packs/<name>).
+// Descriptions are derived from the pack's directive so wizard options remain
+// informative without loading the full set of reference docs.
+func ListDocPacks(fs content.FileSystem) ([]DocPack, error) {
+	packs, err := docpacks.List(fs)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]DocPack, 0, len(packs))
+	for _, pack := range packs {
+		result = append(result, DocPack{
+			Name:        pack.Name,
+			DisplayName: pack.DisplayName,
+			Description: docpacks.ShortDescription(pack),
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+
+	return result, nil
 }
 
 func ListBaseSkills(fs content.FileSystem) ([]BaseSkill, error) {

@@ -51,6 +51,7 @@ const (
 	SelectiveCategoryBaseSkills     SelectiveInstallCategory = "base-skills"
 	SelectiveCategoryWorkflows      SelectiveInstallCategory = "workflows"
 	SelectiveCategorySystemCommands SelectiveInstallCategory = "system-commands"
+	SelectiveCategoryDocPacks       SelectiveInstallCategory = "doc-packs"
 )
 
 // SyncMode represents how changes should be applied to target repos
@@ -75,6 +76,7 @@ type Config struct {
 	SelectedBaseSkills     []string
 	SelectedWorkflows      []string
 	SelectedSystemCommands []string
+	SelectedDocPacks       []string
 
 	// GitHub sync options
 	SyncToGitHub bool     // Whether to sync generated files to GitHub repos
@@ -93,6 +95,7 @@ var (
 	AvailableTechStacks = []huh.Option[string]{
 		huh.NewOption("Backend", "backend"),
 		huh.NewOption("React", "react"),
+		huh.NewOption("Cloudflare Agent Stack", "cloudflare-agent-stack"),
 	}
 
 	GuidelinesModeOptions = []huh.Option[string]{
@@ -110,6 +113,7 @@ var (
 		huh.NewOption("Base skills", string(SelectiveCategoryBaseSkills)),
 		huh.NewOption("Workflows", string(SelectiveCategoryWorkflows)),
 		huh.NewOption("System commands", string(SelectiveCategorySystemCommands)),
+		huh.NewOption("Doc packs", string(SelectiveCategoryDocPacks)),
 	}
 
 	SyncModeOptions = []huh.Option[string]{
@@ -303,10 +307,14 @@ func RunAdd(fs content.FileSystem) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover system commands: %w", err)
 	}
+	docPacks, err := catalog.ListDocPacks(fs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover doc packs: %w", err)
+	}
 
-	availableCategories := buildSelectiveCategoryOptions(baseSkills, workflows, systemCommands)
+	availableCategories := buildSelectiveCategoryOptions(baseSkills, workflows, systemCommands, docPacks)
 	if len(availableCategories) == 0 {
-		return nil, errors.New("no base skills, workflows, or system commands are available to install")
+		return nil, errors.New("no base skills, workflows, system commands, or doc packs are available to install")
 	}
 
 	cwd, err := os.Getwd()
@@ -408,6 +416,23 @@ func RunAdd(fs content.FileSystem) (*Config, error) {
 		}
 	}
 
+	if containsCategory(selectedCategories, SelectiveCategoryDocPacks) {
+		options := buildDocPackOptions(docPacks)
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Select doc packs to install").
+					Description("Reference knowledge libraries (directive injected into the provider's base file; docs copied to .agentspack/docs/)").
+					Options(options...).
+					Value(&config.SelectedDocPacks).
+					Validate(requireSelection("please select at least one doc pack")),
+			),
+		)
+		if err := form.Run(); err != nil {
+			return nil, fmt.Errorf("wizard error: %w", err)
+		}
+	}
+
 	if shouldAskSelectiveInvocationProfile(config) {
 		var profileStr string = string(SkillInvocationDual)
 		invocationForm := huh.NewForm(
@@ -497,6 +522,7 @@ func PrintSummary(config *Config) {
 		fmt.Printf("Base Skills: %v\n", formatList(config.SelectedBaseSkills))
 		fmt.Printf("Workflows:   %v\n", formatList(config.SelectedWorkflows))
 		fmt.Printf("Commands:    %v\n", formatList(config.SelectedSystemCommands))
+		fmt.Printf("Doc Packs:   %v\n", formatList(config.SelectedDocPacks))
 		if shouldAskSelectiveInvocationProfile(config) {
 			fmt.Printf("Skills:      %s invocation\n", config.InvocationProfile)
 		}
@@ -563,7 +589,7 @@ func requireSelection(message string) func([]string) error {
 	}
 }
 
-func buildSelectiveCategoryOptions(baseSkills []catalog.BaseSkill, workflows []catalog.Workflow, systemCommands []catalog.SystemCommand) []huh.Option[string] {
+func buildSelectiveCategoryOptions(baseSkills []catalog.BaseSkill, workflows []catalog.Workflow, systemCommands []catalog.SystemCommand, docPacks []catalog.DocPack) []huh.Option[string] {
 	options := make([]huh.Option[string], 0, len(SelectiveInstallCategoryOptions))
 	if len(baseSkills) > 0 {
 		options = append(options, huh.NewOption(fmt.Sprintf("Base skills (%d available)", len(baseSkills)), string(SelectiveCategoryBaseSkills)))
@@ -573,6 +599,24 @@ func buildSelectiveCategoryOptions(baseSkills []catalog.BaseSkill, workflows []c
 	}
 	if len(systemCommands) > 0 {
 		options = append(options, huh.NewOption(fmt.Sprintf("System commands (%d available)", len(systemCommands)), string(SelectiveCategorySystemCommands)))
+	}
+	if len(docPacks) > 0 {
+		options = append(options, huh.NewOption(fmt.Sprintf("Doc packs (%d available)", len(docPacks)), string(SelectiveCategoryDocPacks)))
+	}
+	return options
+}
+
+func buildDocPackOptions(packs []catalog.DocPack) []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(packs))
+	for _, pack := range packs {
+		label := pack.DisplayName
+		if label == "" {
+			label = pack.Name
+		}
+		if pack.Description != "" {
+			label = fmt.Sprintf("%s - %s", label, pack.Description)
+		}
+		options = append(options, huh.NewOption(label, pack.Name))
 	}
 	return options
 }
